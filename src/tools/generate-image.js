@@ -27,7 +27,7 @@ function selectRatio(requested) {
 }
 
 // Infer an aspect ratio from the prompt text (keyword based).
-function inferRatioFromPrompt(prompt) {
+export function inferRatioFromPrompt(prompt) {
   const p = (prompt || '').toLowerCase();
   if (/\b(9:16|vertical|portrait|phone|wallpaper|story|stories|reel|reels|tiktok|shorts)\b/.test(p)) return '9:16';
   if (/\b(16:9|landscape|wide|widescreen|banner|cinematic|desktop|panorama)\b/.test(p)) return '16:9';
@@ -71,7 +71,7 @@ async function clickTabBySuffix(page, suffix, exactEnd) {
 }
 
 // Configure Image mode, aspect ratio, and image count in the settings popover.
-async function configureGeneration(page, { ratio, count, model }) {
+export async function configureGeneration(page, { ratio, count, model }) {
   const opened = await openSettingsPopover(page);
   if (!opened) {
     logger.warn('Could not open settings popover — using current Flow settings');
