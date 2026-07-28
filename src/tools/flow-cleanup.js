@@ -25,7 +25,9 @@ export async function trashImages(max = 100) {
     const count = await countMedia(page);
     if (count <= 0) break;
 
-    // Hover the first media image so its card action buttons appear.
+    // Reset hover state, then hover the first media image.
+    await page.mouse.move(5, 5).catch(() => {});
+    await page.waitForTimeout(300);
     const box = await page.evaluate(() => {
       const img = [...document.querySelectorAll('img')]
         .find((i) => /media\.getMediaUrlRedirect\?name=|flow-content/.test(i.src || '') && i.width > 80);
@@ -35,38 +37,36 @@ export async function trashImages(max = 100) {
     });
     if (!box) break;
     await page.mouse.move(box.x, box.y);
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(900);
 
-    // Click the card's own "more_vert" (Plus) button.
-    const moreHandle = await page.evaluateHandle(() => {
-      const img = [...document.querySelectorAll('img')]
-        .find((i) => /media\.getMediaUrlRedirect\?name=|flow-content/.test(i.src || '') && i.width > 80);
-      if (!img) return null;
-      let el = img, card = null;
-      for (let i = 0; i < 9 && el; i++) { el = el.parentElement; if (!el) break; if (el.querySelector('button')) { card = el; break; } }
-      if (!card) return null;
-      const btns = [...card.querySelectorAll('button,[role="button"]')];
-      return btns.find((b) => (b.textContent || '').includes('more_vert')) || null;
-    });
-    const moreEl = moreHandle.asElement();
-    if (!moreEl) { logger.warn('trashImages: per-image menu button not found'); break; }
-    await moreEl.click().catch(() => {});
-    await page.waitForTimeout(700);
-
-    // Click "Placer dans la corbeille" (move THIS image to trash).
-    const item = page.locator('[role="menuitem"]:has-text("Placer dans la corbeille"), button:has-text("Placer dans la corbeille")').first();
-    if (!(await item.isVisible().catch(() => false))) {
-      await page.keyboard.press('Escape').catch(() => {});
-      logger.warn('trashImages: "Placer dans la corbeille" not found — stopping');
-      break;
+    // The hovered image's options button is the last visible "more_vert".
+    let opened = false;
+    for (let attempt = 0; attempt < 3 && !opened; attempt++) {
+      const more = page.locator('button:has-text("more_vert")').last();
+      if (await more.isVisible().catch(() => false)) {
+        await more.click().catch(() => {});
+        await page.waitForTimeout(700);
+        const item = page.locator('[role="menuitem"]:has-text("Placer dans la corbeille"), button:has-text("Placer dans la corbeille")').first();
+        if (await item.isVisible().catch(() => false)) {
+          await item.click().catch(() => {});
+          opened = true;
+        } else {
+          await page.keyboard.press('Escape').catch(() => {});
+          await page.mouse.move(box.x, box.y);
+          await page.waitForTimeout(600);
+        }
+      } else {
+        await page.mouse.move(box.x, box.y);
+        await page.waitForTimeout(600);
+      }
     }
-    await item.click().catch(() => {});
-    await page.waitForTimeout(1200);
+    if (!opened) { logger.warn('trashImages: could not open per-image menu — stopping', { removed }); break; }
 
-    // Optional confirmation
+    await page.waitForTimeout(1000);
     const confirm = page.locator('[role="dialog"] button:has-text("Supprimer"), [role="alertdialog"] button:has-text("Supprimer"), [role="dialog"] button:has-text("Confirmer")').first();
     await clickIfVisible(confirm);
-    await page.waitForTimeout(500);
+    // Wait for the gallery to re-render after removal.
+    await page.waitForTimeout(2000);
 
     removed++;
   }
