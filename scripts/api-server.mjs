@@ -17,6 +17,7 @@
 //   GET  /jobs/:id | GET /jobs | GET /outputs/...
 import http from 'http';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -33,6 +34,12 @@ const JOBS_FILE = path.join(PROJECT_ROOT, 'outputs', 'jobs.json');
 const PORT = get('apiPort', 8080);
 const CONCURRENCY = get('concurrency', 3);
 const JOB_TIMEOUT_MS = get('jobTimeoutMs', 240000);
+const CDP_PORT = get('cdpPort', 9222);
+const RECYCLE_EVERY = get('recycleEveryGenerations', 40); // recycle Chrome after N generations
+const MIN_AVAIL_MB = get('minAvailableMemMB', 300);       // recycle if available RAM drops below this
+
+let genCount = 0;        // total completed generations
+let lastRecycleGen = 0;  // genCount at last recycle
 
 let API_KEY = get('apiKey');
 if (!API_KEY) {
@@ -86,6 +93,50 @@ async function resetBrowser() {
   try { await closeBrowser(); } catch {}
 }
 
+// ---------- Self-maintenance ----------
+// Available RAM in MB (accurate on Linux via MemAvailable).
+function availableMemMB() {
+  try {
+    const s = fs.readFileSync('/proc/meminfo', 'utf8');
+    const m = s.match(/MemAvailable:\s+(\d+)\s+kB/);
+    if (m) return Math.round(parseInt(m[1], 10) / 1024);
+  } catch {}
+  return Math.round(os.freemem() / 1048576);
+}
+
+// (4) Remove orphan Chrome temp profiles left by crashed sessions.
+function cleanTempProfiles() {
+  try {
+    const tmp = os.tmpdir();
+    const current = global.__chromeTempDir || '';
+    for (const name of fs.readdirSync(tmp)) {
+      if (!name.startsWith('chrome-kiara-cdp-')) continue;
+      const full = path.join(tmp, name);
+      if (full === current) continue;
+      try {
+        const age = Date.now() - fs.statSync(full).mtimeMs;
+        if (age > 5 * 60 * 1000) fs.rmSync(full, { recursive: true, force: true });
+      } catch {}
+    }
+  } catch {}
+}
+
+// (9) Is the Chrome DevTools endpoint responsive?
+async function cdpHealthy() {
+  try {
+    const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+    return r.ok;
+  } catch { return false; }
+}
+
+// (6) Decide whether Chrome should be recycled (only called at a safe, idle point).
+function shouldRecycleChrome() {
+  if (!ready) return false;
+  if (genCount - lastRecycleGen >= RECYCLE_EVERY) return true;
+  if (availableMemMB() < MIN_AVAIL_MB) return true;
+  return false;
+}
+
 // ---------- Concurrent pump ----------
 function enqueue(job) {
   jobs.set(job.id, job);
@@ -99,6 +150,13 @@ async function pump() {
   pumpRunning = true;
   try {
     while (queue.length > 0 || inFlight.size > 0) {
+      // (6) Recycle Chrome at a safe point (nothing in flight) to avoid leaks.
+      if (inFlight.size === 0 && shouldRecycleChrome()) {
+        console.log(`[api] Recycling Chrome (gen ${genCount}, availMB ${availableMemMB()})`);
+        await resetBrowser();
+        lastRecycleGen = genCount;
+      }
+
       // Fill up to concurrency (submits are serialized; generations overlap)
       while (inFlight.size < CONCURRENCY && queue.length > 0) {
         const id = queue.shift();
@@ -135,6 +193,7 @@ async function pump() {
             job.aspectRatio = r.aspectRatio;
             job.status = 'done';
             job.finishedAt = Date.now();
+            genCount++;
             console.log(`[api] Done ${id}`);
           } catch (e) {
             job.status = 'failed';
@@ -265,3 +324,15 @@ server.listen(PORT, () => {
   ensureBrowser().catch((e) => console.error('[api] warmup failed:', e.message));
   if (queue.length) setImmediate(pump);
 });
+
+// (4) + (9) Periodic maintenance: clean orphan temp profiles; when idle,
+// verify Chrome is responsive and reset it if not.
+setInterval(async () => {
+  cleanTempProfiles();
+  if (!pumpRunning && inFlight.size === 0 && ready) {
+    if (!(await cdpHealthy())) {
+      console.log('[api] CDP unresponsive while idle — resetting Chrome.');
+      await resetBrowser();
+    }
+  }
+}, 60000);
