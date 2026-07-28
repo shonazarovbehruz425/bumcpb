@@ -209,6 +209,19 @@ export async function handleGenerateImage(args) {
       }
     }
 
+    // Snapshot images already present so we only return NEWLY generated ones
+    // (the project is reused, so old images remain in the DOM).
+    const beforeUuids = await page.evaluate(() => {
+      const imgs = Array.from(document.querySelectorAll('img'));
+      const uuids = [];
+      imgs.forEach(img => {
+        const src = img.src || '';
+        const match = src.match(/media\.getMediaUrlRedirect\?name=([a-f0-9-]+)/);
+        if (match && img.width > 100) uuids.push(match[1]);
+      });
+      return [...new Set(uuids)];
+    }).catch(() => []);
+
     // STEP 10: Click generate ⚠️ CRÉDITS SERONT CONSOMMÉS
     logger.info('⚠️⚠️⚠️ Cliquant Generate — des crédits vont être consommés');
     await generateBtnLocator.click();
@@ -260,9 +273,10 @@ export async function handleGenerateImage(args) {
         return [...new Set(uuids)];
       });
 
-      if (imageUuids.length > 0) {
-        generatedImageUuids = imageUuids;
-        logger.info('Generated images detected in DOM', { count: imageUuids.length });
+      const freshUuids = imageUuids.filter((u) => !beforeUuids.includes(u));
+      if (freshUuids.length > 0) {
+        generatedImageUuids = freshUuids;
+        logger.info('New generated images detected in DOM', { count: freshUuids.length });
         break;
       }
 
