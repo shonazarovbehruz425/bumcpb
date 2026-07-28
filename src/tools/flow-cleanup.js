@@ -45,13 +45,15 @@ export async function emptyTrash() {
   const page = getPage();
   await page.keyboard.press('Escape').catch(() => {}); // ensure no menu open
 
-  const nav = page.locator('button:has-text("corbeille")').first();
-  if (!(await clickIfVisible(nav))) { logger.warn('cleanup: corbeille nav not found'); return false; }
-  await page.waitForTimeout(2500);
+  // Navigate directly to the trash view (reliable, avoids the sidebar button).
+  const base = page.url().replace(/\/trash.*$/, '').replace(/[?#].*$/, '');
+  try {
+    await page.goto(base + '/trash', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+  } catch {}
 
   const emptyBtn = page.locator('button:has-text("Tout supprimer")').first();
-  if (!(await clickIfVisible(emptyBtn))) { logger.warn('cleanup: "Tout supprimer" not found'); }
-  else {
+  if (await clickIfVisible(emptyBtn)) {
     await page.waitForTimeout(1000);
     const confirm = page.locator(
       '[role="dialog"] button:has-text("Supprimer"), [role="alertdialog"] button:has-text("Supprimer"), [role="dialog"] button:has-text("Confirmer"), [role="dialog"] button:has-text("Tout supprimer")'
@@ -59,10 +61,11 @@ export async function emptyTrash() {
     await clickIfVisible(confirm);
     await page.waitForTimeout(2000);
     logger.info('Trash emptied');
+  } else {
+    logger.warn('cleanup: "Tout supprimer" not found on trash page (trash may already be empty)');
   }
 
-  // Return to the media view via URL (reliable): strip the /trash suffix.
-  const base = page.url().replace(/\/trash.*$/, '');
+  // Return to the project media view.
   try {
     await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(2500);
