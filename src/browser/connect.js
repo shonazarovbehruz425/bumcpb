@@ -141,11 +141,15 @@ export async function launchChromeDirect(options = {}) {
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${tempDir}`,
     `--profile-directory=${profileName}`,
+    '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
     '--window-size=1920,1080',
   ];
   if (headless) args.push('--headless=new');
+  if (process.platform === 'linux') {
+    args.push('--no-sandbox', '--disable-dev-shm-usage');
+  }
 
   logger.info('Launching Chrome directly', { chromePath, cdpPort, headless });
 

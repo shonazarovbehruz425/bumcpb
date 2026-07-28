@@ -51,6 +51,7 @@ function main() {
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${userDataDir}`,
     `--profile-directory=${profile}`,
+    '--password-store=basic',
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
