@@ -228,8 +228,8 @@ export async function handleGenerateImage(args) {
       logger.warn('Generate button not visible on project page');
     }
 
-    // STEP 4.5: Configure Image mode, aspect ratio, and image count (=1 unless overridden)
-    await configureGeneration(page, { ratio, count: args.quantity || 1, model: args.model });
+    // STEP 4.5: Configure Image mode, aspect ratio, and ALWAYS 1 image per generation
+    await configureGeneration(page, { ratio, count: 1, model: args.model });
 
     // STEP 5: Find the prompt input (contenteditable div at bottom toolbar)
     let promptInput = null;
@@ -371,7 +371,7 @@ export async function handleGenerateImage(args) {
     // STEP 12: Wait for images to appear in the DOM
     logger.info('Waiting for generated images...');
     let generatedImageUuids = [];
-    const expectedCount = Math.min(Math.max(parseInt(args.quantity || 1, 10), 1), 4);
+    const expectedCount = 1; // Flow generate count is always 1 per generation
     const genTimeoutMs = get('generationTimeoutMs', 120000);
     const genStart = Date.now();
     let firstFreshAt = 0;
