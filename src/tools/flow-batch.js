@@ -58,9 +58,32 @@ export function takeResultForPrompt(prompt) {
 
 // Type a prompt and click Generate WITHOUT waiting for the image.
 // Returns the ratio actually used.
+// Wait until the generation composer (prompt input) is actually present.
+async function waitForComposer(page, ms = 30000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const ok = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
+    if (ok) return true;
+    await page.waitForTimeout(1000);
+  }
+  return false;
+}
+
 export async function submitPrompt({ prompt, ratio, model }) {
   const page = getPage();
   await ensureProjectInContext(page, { campaign: 'api' });
+
+  // Wait for the composer to load; if missing, reload the project once and wait again.
+  let composerReady = await waitForComposer(page, 30000);
+  if (!composerReady) {
+    logger.warn('Composer not ready — reloading project once');
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    await page.waitForTimeout(3000);
+    composerReady = await waitForComposer(page, 30000);
+  }
+  if (!composerReady) {
+    throw new FlowError(ErrorCodes.UNKNOWN_UI_CHANGE, 'Generation composer (prompt input) not available');
+  }
 
   const ratios = get('ratios', []);
   let r = (ratio && ratios.includes(ratio)) ? ratio : inferRatioFromPrompt(prompt);

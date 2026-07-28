@@ -189,7 +189,9 @@ async function pump() {
           job.finishedAt = Date.now();
           saveJobs();
           console.error(`[api] Submit failed ${id}: ${e.message}`);
-          await resetBrowser();
+          // Only fully reset if Chrome actually died; otherwise the next
+          // submitPrompt will reload the project and recover on its own.
+          if (!isBrowserConnected()) await resetBrowser();
         }
         await sleep(1500);
       }
