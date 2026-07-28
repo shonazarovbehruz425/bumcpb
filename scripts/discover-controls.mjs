@@ -13,38 +13,52 @@ async function main() {
   await ensureProjectInContext(page, { name: 'Discover', campaign: 'telegram' });
   await page.waitForTimeout(3000);
 
-  const info = await page.evaluate(() => {
+  const dump = () => page.evaluate(() => {
     const visible = (el) => el.offsetParent !== null || (el.getClientRects && el.getClientRects().length);
-    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 60);
-
-    const buttons = [];
-    document.querySelectorAll('button, [role="button"], [role="tab"], [role="combobox"], [role="menuitem"]').forEach((b) => {
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
+    const out = [];
+    document.querySelectorAll(
+      'button, [role="button"], [role="tab"], [role="combobox"], [role="menuitem"], ' +
+      '[role="menuitemradio"], [role="radio"], [role="option"], [role="switch"], [role="slider"], input'
+    ).forEach((b) => {
       if (!visible(b)) return;
-      buttons.push({
+      out.push({
         tag: b.tagName.toLowerCase(),
         role: b.getAttribute('role') || '',
-        id: (b.id || '').substring(0, 50),
+        id: (b.id || '').substring(0, 40),
+        type: b.getAttribute('type') || '',
         aria: clean(b.getAttribute('aria-label')),
+        val: clean(b.value),
         text: clean(b.textContent),
       });
     });
+    return out;
+  }).catch(() => []);
 
-    // Anything that looks like a ratio (contains ":") or a small number 1-4
-    const ratioish = [];
-    document.querySelectorAll('*').forEach((el) => {
-      if (!visible(el) || el.children.length > 0) return;
-      const t = (el.textContent || '').trim();
-      if (/^(16:9|9:16|1:1|4:3|3:4)$/.test(t) || /^[1-4]$/.test(t)) {
-        ratioish.push({ tag: el.tagName.toLowerCase(), text: t, aria: clean(el.getAttribute('aria-label')) });
-      }
-    });
+  const before = await dump();
 
-    return { url: location.href, buttonCount: buttons.length, buttons, ratioish };
-  }).catch((e) => ({ error: e.message }));
+  // Open the settings popover (the "Nano Banana ... crop_ ... x1" button).
+  let opened = false;
+  const triggers = [
+    page.locator('button:has-text("Nano Banana")').first(),
+    page.locator('button:has-text("Banana")').first(),
+    page.locator('button:has-text("crop_")').first(),
+  ];
+  for (const t of triggers) {
+    if (await t.isVisible().catch(() => false)) {
+      await t.click().catch(() => {});
+      opened = true;
+      break;
+    }
+  }
+  await page.waitForTimeout(1800);
+  const afterSettings = await dump();
 
-  console.log('==================== FLOW CONTROLS ====================');
-  console.log(JSON.stringify(info, null, 2));
-  console.log('=======================================================');
+  console.log('==================== TOOLBAR (closed) ====================');
+  console.log(JSON.stringify(before, null, 2));
+  console.log('============ SETTINGS POPOVER (opened=' + opened + ') ============');
+  console.log(JSON.stringify(afterSettings, null, 2));
+  console.log('==========================================================');
 
   try { await takeScreenshot(getPage(), 'discover-controls'); console.log('Screenshot saved under screenshots/'); } catch {}
   await closeBrowser();
