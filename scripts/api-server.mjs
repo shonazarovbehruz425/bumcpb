@@ -39,6 +39,7 @@ const CDP_PORT = get('cdpPort', 9222);
 const RECYCLE_EVERY = get('recycleEveryGenerations', 40); // recycle Chrome after N generations
 const MIN_AVAIL_MB = get('minAvailableMemMB', 300);       // recycle if available RAM drops below this
 const CLEAR_EVERY = get('clearEveryGenerations', 3);      // move gallery to trash after N generations
+const ENABLE_CLEANUP = get('enableTrashCleanup', false);  // DANGEROUS: current impl deletes the project — keep OFF
 
 let genCount = 0;        // total completed generations
 let lastRecycleGen = 0;  // genCount at last recycle
@@ -156,7 +157,7 @@ async function pump() {
       // At a safe point (nothing in flight): periodic cleanup + Chrome recycle.
       if (inFlight.size === 0) {
         // Move the accumulated gallery to trash every N generations (keeps DOM light).
-        if (ready && genCount - lastClearGen >= CLEAR_EVERY) {
+        if (ENABLE_CLEANUP && ready && genCount - lastClearGen >= CLEAR_EVERY) {
           try { const r = await clearProjectMedia(); console.log(`[api] Cleared gallery to trash`, r); } catch {}
           lastClearGen = genCount;
         }
@@ -227,13 +228,13 @@ async function pump() {
 
       await sleep(1500);
     }
-    // All jobs drained → final cleanup: move any remaining media to trash + empty it.
-    if (ready) {
+    // All jobs drained → optional cleanup (disabled by default; see ENABLE_CLEANUP).
+    if (ENABLE_CLEANUP && ready) {
       try {
         await clearProjectMedia();
         await emptyTrash();
         lastClearGen = genCount;
-        console.log('[api] Final cleanup done (gallery cleared, trash emptied).');
+        console.log('[api] Final cleanup done.');
       } catch (e) { console.warn('[api] final cleanup failed:', e.message); }
     }
   } finally {
