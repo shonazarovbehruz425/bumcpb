@@ -1,5 +1,7 @@
-// Keep the Flow project light: move all generated media to trash, then empty it.
-// Correlation/download happen at generation time, so clearing afterward is safe.
+// Keep the Flow project light by moving generated images to trash ONE BY ONE
+// (per-image "Placer dans la corbeille" — never the project-level delete),
+// then emptying the trash. Correlation/download happen at generation time,
+// so clearing afterwards is safe.
 import { getPage } from '../browser/connect.js';
 import { logger } from '../utils/logger.js';
 
@@ -14,38 +16,69 @@ async function countMedia(page) {
     .catch(() => -1);
 }
 
-// Move all media in the current project to the trash (bulk "Supprimer").
-export async function clearProjectMedia() {
+// Move up to `max` images to the trash, one at a time, via each image's own menu.
+export async function trashImages(max = 100) {
   const page = getPage();
-  const before = await countMedia(page);
-  if (before <= 0) return { cleared: 0 };
+  let removed = 0;
 
-  const more = page.locator('button:has-text("more_vert")').first();
-  if (!(await clickIfVisible(more))) { logger.warn('cleanup: options menu not found'); return { cleared: 0 }; }
-  await page.waitForTimeout(800);
+  for (let k = 0; k < max; k++) {
+    const count = await countMedia(page);
+    if (count <= 0) break;
 
-  const del = page.locator('[role="menuitem"]:has-text("Supprimer"), button:has-text("Supprimer")')
-    .filter({ hasNotText: 'corbeille' }).first();
-  if (!(await clickIfVisible(del))) { await page.keyboard.press('Escape').catch(() => {}); return { cleared: 0 }; }
-  await page.waitForTimeout(1000);
+    // Hover the first media image so its card action buttons appear.
+    const box = await page.evaluate(() => {
+      const img = [...document.querySelectorAll('img')]
+        .find((i) => /media\.getMediaUrlRedirect\?name=|flow-content/.test(i.src || '') && i.width > 80);
+      if (!img) return null;
+      const r = img.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    });
+    if (!box) break;
+    await page.mouse.move(box.x, box.y);
+    await page.waitForTimeout(500);
 
-  const confirm = page.locator(
-    '[role="dialog"] button:has-text("Supprimer"), [role="alertdialog"] button:has-text("Supprimer"), [role="dialog"] button:has-text("Confirmer")'
-  ).first();
-  await clickIfVisible(confirm);
-  await page.waitForTimeout(2000);
+    // Click the card's own "more_vert" (Plus) button.
+    const moreHandle = await page.evaluateHandle(() => {
+      const img = [...document.querySelectorAll('img')]
+        .find((i) => /media\.getMediaUrlRedirect\?name=|flow-content/.test(i.src || '') && i.width > 80);
+      if (!img) return null;
+      let el = img, card = null;
+      for (let i = 0; i < 9 && el; i++) { el = el.parentElement; if (!el) break; if (el.querySelector('button')) { card = el; break; } }
+      if (!card) return null;
+      const btns = [...card.querySelectorAll('button,[role="button"]')];
+      return btns.find((b) => (b.textContent || '').includes('more_vert')) || null;
+    });
+    const moreEl = moreHandle.asElement();
+    if (!moreEl) { logger.warn('trashImages: per-image menu button not found'); break; }
+    await moreEl.click().catch(() => {});
+    await page.waitForTimeout(700);
 
-  const after = await countMedia(page);
-  logger.info('Project media cleared', { before, after });
-  return { cleared: before - Math.max(after, 0), before, after };
+    // Click "Placer dans la corbeille" (move THIS image to trash).
+    const item = page.locator('[role="menuitem"]:has-text("Placer dans la corbeille"), button:has-text("Placer dans la corbeille")').first();
+    if (!(await item.isVisible().catch(() => false))) {
+      await page.keyboard.press('Escape').catch(() => {});
+      logger.warn('trashImages: "Placer dans la corbeille" not found — stopping');
+      break;
+    }
+    await item.click().catch(() => {});
+    await page.waitForTimeout(1200);
+
+    // Optional confirmation
+    const confirm = page.locator('[role="dialog"] button:has-text("Supprimer"), [role="alertdialog"] button:has-text("Supprimer"), [role="dialog"] button:has-text("Confirmer")').first();
+    await clickIfVisible(confirm);
+    await page.waitForTimeout(500);
+
+    removed++;
+  }
+
+  logger.info('Images moved to trash', { removed });
+  return { removed };
 }
 
-// Permanently empty the trash ("Tout supprimer"), then return to the media view.
+// Permanently empty the trash ("Tout supprimer") via the /trash URL, then return.
 export async function emptyTrash() {
   const page = getPage();
-  await page.keyboard.press('Escape').catch(() => {}); // ensure no menu open
-
-  // Navigate directly to the trash view (reliable, avoids the sidebar button).
+  await page.keyboard.press('Escape').catch(() => {});
   const base = page.url().replace(/\/trash.*$/, '').replace(/[?#].*$/, '');
   try {
     await page.goto(base + '/trash', { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -62,25 +95,21 @@ export async function emptyTrash() {
     await page.waitForTimeout(2000);
     logger.info('Trash emptied');
   } else {
-    logger.warn('cleanup: "Tout supprimer" not found on trash page (trash may already be empty)');
+    logger.warn('emptyTrash: "Tout supprimer" not found (trash may be empty)');
   }
 
-  // Return to the project media view.
-  try {
-    await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(2500);
-  } catch {}
+  try { await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 }); await page.waitForTimeout(2500); } catch {}
   return true;
 }
 
-// Full cleanup: clear media + empty trash.
+// Full cleanup: trash all images (per-image) + empty trash.
 export async function cleanupProject() {
   try {
-    const r = await clearProjectMedia();
+    const r = await trashImages();
     await emptyTrash();
     return r;
   } catch (e) {
     logger.warn('cleanup failed', { error: e.message });
-    return { cleared: 0, error: e.message };
+    return { removed: 0, error: e.message };
   }
 }

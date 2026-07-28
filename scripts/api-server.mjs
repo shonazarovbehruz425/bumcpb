@@ -25,7 +25,7 @@ import { get } from '../src/utils/config.js';
 import { launchChromeDirect, closeBrowser, getPage, isBrowserConnected } from '../src/browser/connect.js';
 import { navigateToFlow } from '../src/browser/launch-profile.js';
 import { attachResultListener, resetResultListener, submitPrompt, takeResultForPrompt, downloadResult } from '../src/tools/flow-batch.js';
-import { clearProjectMedia, emptyTrash } from '../src/tools/flow-cleanup.js';
+import { trashImages, emptyTrash } from '../src/tools/flow-cleanup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -158,7 +158,7 @@ async function pump() {
       if (inFlight.size === 0) {
         // Move the accumulated gallery to trash every N generations (keeps DOM light).
         if (ENABLE_CLEANUP && ready && genCount - lastClearGen >= CLEAR_EVERY) {
-          try { const r = await clearProjectMedia(); console.log(`[api] Cleared gallery to trash`, r); } catch {}
+          try { const r = await trashImages(); console.log(`[api] Moved images to trash`, r); } catch {}
           lastClearGen = genCount;
         }
         // (6) Recycle Chrome to avoid memory leaks.
@@ -231,7 +231,7 @@ async function pump() {
     // All jobs drained → optional cleanup (disabled by default; see ENABLE_CLEANUP).
     if (ENABLE_CLEANUP && ready) {
       try {
-        await clearProjectMedia();
+        await trashImages();
         await emptyTrash();
         lastClearGen = genCount;
         console.log('[api] Final cleanup done.');
