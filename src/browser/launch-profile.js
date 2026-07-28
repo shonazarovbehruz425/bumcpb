@@ -59,8 +59,9 @@ export async function navigateToFlow(page, toolPage) {
     : FLOW_URL;
 
   logger.info('Navigating to Google Flow', { url: targetUrl });
-  await page.goto(targetUrl, { waitUntil: 'networkidle', timeout: 30000 });
-  await page.waitForTimeout(2000);
+  await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  // Give the SPA time to hydrate (Flow keeps network busy, so we don't wait for networkidle).
+  await page.waitForTimeout(4000);
 
   const currentUrl = page.url();
   logger.info('Flow page loaded', { url: currentUrl.substring(0, 100) });
