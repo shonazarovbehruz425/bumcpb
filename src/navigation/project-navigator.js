@@ -273,6 +273,50 @@ export async function ensureProjectInContext(page, context = {}) {
     }
   }
 
+  // Before creating a new project, try to reuse an EXISTING project from the
+  // Flow homepage. This is far more reliable than clicking "Nouveau projet".
+  try {
+    const flowUrl = get('flowUrl', 'https://labs.google/fx/fr/tools/flow');
+    if (!page.url().includes('/project/')) {
+      if (!page.url().includes(flowUrl)) {
+        await page.goto(flowUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(3000);
+      }
+      const href = await page.evaluate(() => {
+        const link = document.querySelector('a[href*="/project/"]');
+        return link ? link.getAttribute('href') : null;
+      }).catch(() => null);
+
+      if (href) {
+        const full = href.startsWith('http') ? href : 'https://labs.google' + href;
+        logger.info('Reusing existing project from homepage', { url: full });
+        await page.goto(full, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(3000);
+        const finalUrl = page.url();
+
+        // Persist so future calls with this campaign go straight here.
+        if (context.campaign) {
+          const store = loadProjects();
+          if (!store.projects.find(p => p.url === finalUrl)) {
+            store.projects.push({
+              id: `proj_${Date.now()}`,
+              url: finalUrl,
+              name: context.name || 'Projet',
+              campaign: context.campaign,
+              created_at: new Date().toISOString(),
+              last_used: new Date().toISOString(),
+              tasks: [],
+            });
+            saveProjects(store);
+          }
+        }
+        return { url: finalUrl, reused: true };
+      }
+    }
+  } catch (e) {
+    logger.warn('Could not reuse existing project, will create new', { error: e.message });
+  }
+
   // Create new project
   return await createNewProject(page, context.name, context.campaign);
 }
