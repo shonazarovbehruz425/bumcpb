@@ -371,8 +371,10 @@ export async function handleGenerateImage(args) {
     // STEP 12: Wait for images to appear in the DOM
     logger.info('Waiting for generated images...');
     let generatedImageUuids = [];
+    const expectedCount = Math.min(Math.max(parseInt(args.quantity || 1, 10), 1), 4);
     const genTimeoutMs = get('generationTimeoutMs', 120000);
     const genStart = Date.now();
+    let firstFreshAt = 0;
 
     while (Date.now() - genStart < genTimeoutMs) {
       await page.waitForTimeout(2000);
@@ -399,9 +401,17 @@ export async function handleGenerateImage(args) {
 
       const freshUuids = imageUuids.filter((u) => !beforeUuids.includes(u));
       if (freshUuids.length > 0) {
-        generatedImageUuids = freshUuids;
-        logger.info('New generated images detected in DOM', { count: freshUuids.length });
-        break;
+        generatedImageUuids = freshUuids; // keep the latest set
+        if (!firstFreshAt) firstFreshAt = Date.now();
+        if (freshUuids.length >= expectedCount) {
+          logger.info('All expected images detected', { count: freshUuids.length, expected: expectedCount });
+          break;
+        }
+        // Some images arrived; give the rest a short window, then proceed.
+        if (Date.now() - firstFreshAt > 20000) {
+          logger.info('Proceeding with available images', { count: freshUuids.length, expected: expectedCount });
+          break;
+        }
       }
 
       const hasDownload = await page.locator(
