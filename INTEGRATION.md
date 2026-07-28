@@ -16,11 +16,18 @@ POST http://<VPS_IP>:8080/generate
 ```json
 {
   "prompt": "a red sports car, cinematic",
-  "model": "Nano Banana 2",      // optional: Nano Banana Pro | Nano Banana 2 | Imagen 4
-  "ratio": "1:1",                // optional: 16:9 | 4:3 | 1:1 | 3:4 | 9:16
+  "model": "Nano Banana 2",      // optional: auto-selected; auto-falls back to another model if credits run out
+  "ratio": "1:1",                // optional: 16:9 | 4:3 | 1:1 | 3:4 | 9:16. If omitted, inferred from the prompt
+  "quantity": 1,                 // optional: number of images (default 1)
   "include_base64": false         // optional: true to also get the image as base64
 }
 ```
+
+Behavior:
+- **Ratio** is auto-inferred from the prompt when not provided (e.g. "phone wallpaper" → 9:16, "cinematic/landscape" → 16:9, "square/avatar" → 1:1). An explicit `ratio` always wins.
+- **Quantity** defaults to **1** image per request.
+- **Model fallback**: if the chosen model is out of credits, the API automatically retries with the next available model.
+- **Auto-retry**: on a transient error, the page is refreshed and the same prompt is retried.
 
 **Response**
 ```json
