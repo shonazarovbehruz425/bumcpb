@@ -4,9 +4,9 @@ import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import { get } from '../utils/config.js';
 import { FlowError, ErrorCodes } from '../utils/errors.js';
+import { resolveChromePath, resolveProfileSource } from '../utils/paths.js';
 import { launchChromeDirect, setPage, setContext, setConnected, setBrowser, isBrowserConnected } from './connect.js';
 
-const CHROME_PATH = '/opt/google/chrome/chrome';
 const CDP_PORT = get('cdpPort', 9222);
 const FLOW_URL = get('flowUrl', 'https://labs.google/fx/fr/tools/flow');
 
@@ -16,11 +16,14 @@ export async function launchKiaraProfile(headless = false) {
     return { success: true, message: 'Already connected' };
   }
 
-  const profileSource = path.resolve(process.env.HOME, '.config/google-chrome/Profile 3');
+  const chromePath = resolveChromePath(get('chromePath'));
+  const userDataDir = get('chromeUserDataDir');
+  const profileName = get('chromeProfile', 'Profile 3');
+  const profileSource = resolveProfileSource(userDataDir, profileName);
 
   if (!fs.existsSync(profileSource)) {
-    throw new FlowError(ErrorCodes.CONFIG_ERROR,
-      `Profile 3 not found at ${profileSource}. Make sure Chrome Profile 3 exists and is configured with your Google account.`);
+    throw new FlowError(ErrorCodes.INVALID_PARAMS,
+      `Chrome profile "${profileName}" not found at ${profileSource}. Make sure the profile exists and is configured with your Google account.`);
   }
 
   logger.info('Launching Chrome via direct+CDP method (anti-detection)', { profileSource });
@@ -41,10 +44,11 @@ export async function launchKiaraProfile(headless = false) {
   } catch {
     // Launch Chrome directly (not via Playwright) for anti-detection
     return await launchChromeDirect({
-      chromePath: CHROME_PATH,
+      chromePath,
       cdpPort: CDP_PORT,
       headless,
       profileSource,
+      profileName,
     });
   }
 }

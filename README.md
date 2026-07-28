@@ -45,6 +45,66 @@ All through your **own Google account** — no API keys, no third-party tokens.
 
 ---
 
+## 🪟 Quick Start (Windows)
+
+The project is run-ready on Windows. Chrome location, user data dir, and profile are auto-detected — the only thing you supply is your Google email.
+
+```cmd
+npm install
+npm run setup
+```
+
+`npm run setup` creates `config\flow.config.json`, auto-detecting your Chrome executable, user data directory, and an available profile. It never overwrites an existing config.
+
+**Final step — add your email:**
+
+1. Open `config\flow.config.json`
+2. Set `"expectedAccount"` to your Google email (replace `<enter-your-google-email>`)
+
+**Run it:**
+
+```cmd
+scripts\start-browser.cmd   REM launches Chrome with CDP on port 9222
+scripts\start-mcp.cmd       REM or:  npm start
+```
+
+Quick integration test (launches Chrome):
+
+```cmd
+scripts\test.cmd            REM or:  npm test
+```
+
+### Register with an MCP client (Claude Desktop, etc.)
+
+Launch command:
+
+```cmd
+node path\to\src\index.js
+```
+
+Copy-paste MCP client config (adjust the path to your clone):
+
+```json
+{
+  "mcpServers": {
+    "google-flow": {
+      "command": "node",
+      "args": ["D:\\FLOWmcp\\google-flow-browser-mcp\\src\\index.js"]
+    }
+  }
+}
+```
+
+**Even easier — auto-register:** run one command and it writes the entry into Claude Desktop's config for you (with a backup), then prints the snippet for any other client:
+
+```cmd
+npm run register
+```
+
+Restart your AI client afterward.
+
+---
+
 ## ✨ Features
 
 <table>
@@ -88,69 +148,48 @@ All through your **own Google account** — no API keys, no third-party tokens.
 |------|-----|
 | **Node.js ≥ 18** | Runtime for the MCP server |
 | **Google Chrome** | Required for browser automation |
-| **OpenCode** | AI agent that connects to MCP servers |
+| **An MCP client** | Claude Desktop, or any MCP-compatible AI client |
 | **A Google account** | To use Google Flow (yours, not shared) |
 
-### 1️⃣ Install
+### Steps (Windows)
 
-```bash
+```cmd
 git clone https://github.com/TMSSS05/google-flow-browser-mcp.git
 cd google-flow-browser-mcp
 npm install
+npm run setup
 ```
 
-### 2️⃣ Configure your Google profile
+`npm run setup` auto-detects Chrome, your user data dir, and an available profile, and writes `config\flow.config.json`.
 
-```bash
-cp config/flow.config.example.json config/flow.config.json
-```
-
-Edit `config/flow.config.json`:
+Then open `config\flow.config.json` and set:
 
 ```json
 {
   "expectedAccount": "your.email@gmail.com",
-  "chromeProfile": "Profile 3",
-  "chromeUserDataDir": "/home/you/.config/google-chrome"
+  "chromeProfile": "Profile 3"
 }
 ```
 
-> 💡 **Finding your Chrome profile:**  
-> Open Chrome and go to `chrome://version/`. Look for **"Profile Path"** — the last folder name is your profile (e.g., `Profile 3`), and the path before it is your `chromeUserDataDir`.
+> 💡 **Finding your Chrome profile:** open Chrome and go to `chrome://version/`. The last folder in **"Profile Path"** is your profile (e.g., `Profile 3`).
 
-### 3️⃣ Make scripts executable
+Connect it to your AI client (writes the config for you, with a backup):
 
-```bash
-chmod +x scripts/*.sh
+```cmd
+npm run register
 ```
 
-### 4️⃣ Start Chrome with CDP
+Start Chrome with CDP, then the server (or let your MCP client launch it):
 
-```bash
-./scripts/start-browser.sh
+```cmd
+scripts\start-browser.cmd
+npm start
 ```
 
-> This launches Chrome with remote debugging enabled on port 9222 using your configured profile.
+Verify it works (launches Chrome):
 
-### 5️⃣ Start the MCP server
-
-```bash
-# In a separate terminal:
-./scripts/start-mcp.sh
-```
-
-### 6️⃣ Register with OpenCode
-
-```bash
-./scripts/register-opencode.sh
-```
-
-> 🔄 **Restart OpenCode** after registration for the changes to take effect.
-
-### ✅ Verify it works
-
-```bash
-./scripts/test-flow-image.sh
+```cmd
+npm test
 ```
 
 ---
@@ -165,10 +204,12 @@ google-flow-browser-mcp/
 │   └── selectors.map.json          # UI selectors (auto-populated)
 │
 ├── 📂 scripts/
-│   ├── start-browser.sh            # Launch Chrome + CDP
-│   ├── start-mcp.sh                # Start the MCP server
-│   ├── test-flow-image.sh          # Quick integration test
-│   └── register-opencode.sh        # Register in OpenCode config
+│   ├── setup.mjs                   # Auto-generate flow.config.json
+│   ├── register-mcp.mjs / .cmd     # Register server with your AI client
+│   ├── start-browser.cmd           # Launch Chrome + CDP (Windows)
+│   ├── start-mcp.cmd               # Start the MCP server (Windows)
+│   ├── test.cmd                    # Quick integration test (Windows)
+│   └── test-e2e.mjs                # End-to-end test runner
 │
 ├── 📂 src/
 │   ├── index.js                    # MCP server entry point
@@ -345,7 +386,7 @@ Yes! Any MCP-compatible client (Claude Desktop, Continue.dev, etc.) can connect 
 <details>
 <summary><strong>Chrome doesn't start</strong></summary>
 
-Make sure Chrome is installed at the expected path. On Linux, the default is `/opt/google/chrome/chrome`. Edit `scripts/start-browser.sh` to set the correct `CHROME` path for your system.
+Make sure Chrome is installed. `npm run setup` auto-detects it; if it can't, set `chromePath` in `config\flow.config.json` to the full path of `chrome.exe`.
 </details>
 
 <details>

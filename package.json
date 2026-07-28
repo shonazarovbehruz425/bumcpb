@@ -6,8 +6,10 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node scripts/test-flow-image.sh",
-    "discover": "node -e \"console.log('Run: bash scripts/test-flow-image.sh')\""
+    "setup": "node scripts/setup.mjs",
+    "register": "node scripts/register-mcp.mjs",
+    "start-browser": "node scripts/start-browser.mjs",
+    "test": "node scripts/test-e2e.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
