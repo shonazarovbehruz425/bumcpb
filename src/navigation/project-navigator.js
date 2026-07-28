@@ -36,8 +36,8 @@ export async function listExistingProjects(page) {
   // Navigate to the main Flow page if we're not there, or if we're INSIDE a project
   const currentUrl = page.url();
   if (!currentUrl.includes(flowUrl) || currentUrl.includes('/project/')) {
-    await page.goto(flowUrl, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(2000);
+    await page.goto(flowUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
   }
 
   logger.info('Scanning for existing projects...');
@@ -78,14 +78,14 @@ export async function listExistingProjects(page) {
  * wait for the project page to load, store in local registry.
  * Returns { url, id, name }.
  */
-export async function createNewProject(page, name) {
+export async function createNewProject(page, name, campaign) {
   const flowUrl = get('flowUrl', 'https://labs.google/fx/fr/tools/flow');
 
   // Ensure we're on the main Flow page (not inside a project)
   const currentUrl = page.url();
   if (!currentUrl.includes(flowUrl) || currentUrl.includes('/project/')) {
-    await page.goto(flowUrl, { waitUntil: 'networkidle', timeout: 30000 });
-    await page.waitForTimeout(2000);
+    await page.goto(flowUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
   }
 
   logger.info('Creating new project...');
@@ -219,6 +219,7 @@ export async function createNewProject(page, name) {
     id: `proj_${Date.now()}`,
     url: finalUrl,
     name: name || `Projet ${new Date().toLocaleDateString('fr-FR')}`,
+    campaign: campaign || null,
     created_at: new Date().toISOString(),
     last_used: new Date().toISOString(),
     tasks: [],
@@ -263,8 +264,8 @@ export async function ensureProjectInContext(page, context = {}) {
         logger.info('Found matching project from history', {
           campaign: context.campaign, name: match.name, url: match.url,
         });
-        await page.goto(match.url, { waitUntil: 'networkidle', timeout: 30000 });
-        await page.waitForTimeout(2000);
+        await page.goto(match.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(3000);
         match.last_used = new Date().toISOString();
         saveProjects(store);
         return { url: match.url, reused: true, id: match.id, name: match.name };
@@ -273,7 +274,7 @@ export async function ensureProjectInContext(page, context = {}) {
   }
 
   // Create new project
-  return await createNewProject(page, context.name);
+  return await createNewProject(page, context.name, context.campaign);
 }
 
 /**

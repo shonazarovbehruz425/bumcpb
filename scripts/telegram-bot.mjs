@@ -62,7 +62,7 @@ async function generate(chatId, prompt) {
     await sendMessage(chatId, `🎨 Yasayapman: "${prompt}"\nBu 30-90 soniya olishi mumkin...`);
     const { page } = await launchChromeDirect({ headless: true });
     await navigateToFlow(page);
-    const result = await handleGenerateImage({
+    const genPromise = handleGenerateImage({
       prompt,
       model: 'Nano Banana 2',
       ratio: '1:1',
@@ -70,6 +70,10 @@ async function generate(chatId, prompt) {
       project_name: 'Telegram',
       campaign: 'telegram',
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Generatsiya juda uzoq davom etdi (timeout).')), 180000)
+    );
+    const result = await Promise.race([genPromise, timeoutPromise]);
     if (result.files && result.files.length) {
       for (const f of result.files) {
         await sendPhoto(chatId, f, `✅ ${prompt}`);
