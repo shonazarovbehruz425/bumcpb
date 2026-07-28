@@ -9,7 +9,6 @@
     "setup": "node scripts/setup.mjs",
     "register": "node scripts/register-mcp.mjs",
     "start-browser": "node scripts/start-browser.mjs",
-    "bot": "node scripts/telegram-bot.mjs",
     "api": "node scripts/api-server.mjs",
     "test": "node scripts/test-e2e.mjs"
   },
