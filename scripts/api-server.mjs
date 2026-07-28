@@ -95,11 +95,14 @@ async function handleGenerate(req, res, host) {
     );
     const result = await Promise.race([genPromise, timeoutPromise]);
 
+    const wantB64 = body.include_base64 === true;
     const images = (result.files || []).map((f) => {
       const rel = f.replace(/\\/g, '/');
-      let base64 = null;
-      try { base64 = fs.readFileSync(path.resolve(PROJECT_ROOT, f)).toString('base64'); } catch {}
-      return { file: rel, url: `http://${host}/${rel}`, base64 };
+      const img = { file: rel, url: `http://${host}/${rel}` };
+      if (wantB64) {
+        try { img.base64 = fs.readFileSync(path.resolve(PROJECT_ROOT, f)).toString('base64'); } catch {}
+      }
+      return img;
     });
 
     return json(res, 200, {
