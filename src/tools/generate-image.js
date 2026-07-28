@@ -26,6 +26,111 @@ function selectRatio(requested) {
   return null;
 }
 
+// Infer an aspect ratio from the prompt text (keyword based).
+function inferRatioFromPrompt(prompt) {
+  const p = (prompt || '').toLowerCase();
+  if (/\b(9:16|vertical|portrait|phone|wallpaper|story|stories|reel|reels|tiktok|shorts)\b/.test(p)) return '9:16';
+  if (/\b(16:9|landscape|wide|widescreen|banner|cinematic|desktop|panorama)\b/.test(p)) return '16:9';
+  if (/\b(1:1|square|avatar|profile|icon|logo|sticker)\b/.test(p)) return '1:1';
+  if (/\b(4:3)\b/.test(p)) return '4:3';
+  if (/\b(3:4)\b/.test(p)) return '3:4';
+  return null;
+}
+
+// Map ratio -> Flow settings tab id suffix (from UI discovery).
+const RATIO_TRIGGER = {
+  '16:9': '-trigger-LANDSCAPE',
+  '4:3':  '-trigger-LANDSCAPE_4_3',
+  '1:1':  '-trigger-SQUARE',
+  '3:4':  '-trigger-PORTRAIT_3_4',
+  '9:16': '-trigger-PORTRAIT',
+};
+
+// Open the generation settings popover (model / ratio / count).
+async function openSettingsPopover(page) {
+  const trigger = page.locator('button:has-text("crop_")').first();
+  if (await trigger.isVisible().catch(() => false)) {
+    await trigger.click().catch(() => {});
+    await page.waitForTimeout(1200);
+    return true;
+  }
+  return false;
+}
+
+async function clickTabBySuffix(page, suffix, exactEnd) {
+  const sel = exactEnd
+    ? `button[role="tab"][id$="${suffix}"]`
+    : `button[role="tab"][id*="${suffix}"]`;
+  const el = page.locator(sel).first();
+  if (await el.isVisible().catch(() => false)) {
+    await el.click().catch(() => {});
+    await page.waitForTimeout(400);
+    return true;
+  }
+  return false;
+}
+
+// Configure Image mode, aspect ratio, and image count in the settings popover.
+async function configureGeneration(page, { ratio, count, model }) {
+  const opened = await openSettingsPopover(page);
+  if (!opened) {
+    logger.warn('Could not open settings popover — using current Flow settings');
+    return;
+  }
+  // Image mode (not video)
+  await clickTabBySuffix(page, '-trigger-IMAGE', false);
+
+  // Aspect ratio
+  const suffix = RATIO_TRIGGER[ratio];
+  if (suffix) {
+    const exactEnd = (suffix === '-trigger-LANDSCAPE' || suffix === '-trigger-PORTRAIT');
+    const ok = await clickTabBySuffix(page, suffix, exactEnd);
+    logger.info('Ratio tab set', { ratio, ok });
+  }
+
+  // Image count
+  const cnt = Math.min(Math.max(parseInt(count || 1, 10), 1), 4);
+  const okCount = await clickTabBySuffix(page, `-trigger-${cnt}`, true);
+  logger.info('Image count set', { count: cnt, ok: okCount });
+
+  // Optional model selection
+  if (model && model !== 'auto') {
+    try {
+      const dd = page.locator('button:has-text("arrow_drop_down")')
+        .filter({ hasText: /Nano|Banana|Imagen|Veo|Omni/ }).first();
+      if (await dd.isVisible().catch(() => false)) {
+        const current = (await dd.textContent().catch(() => '')) || '';
+        if (!current.includes(model)) {
+          await dd.click().catch(() => {});
+          await page.waitForTimeout(700);
+          const opt = page.locator('[role="menuitem"], [role="option"], button')
+            .filter({ hasText: model }).first();
+          if (await opt.isVisible().catch(() => false)) {
+            await opt.click().catch(() => {});
+            await page.waitForTimeout(600);
+            logger.info('Model selected in UI', { model });
+          } else {
+            await page.keyboard.press('Escape').catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn('Model selection failed', { error: e.message });
+    }
+  }
+
+  // Close the popover
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(500);
+}
+
+// Detect a credit/quota EXHAUSTION message on the page (specific phrases only,
+// to avoid false positives from a normal credits counter).
+async function detectCreditError(page) {
+  const txt = await page.evaluate(() => (document.body.innerText || '').toLowerCase()).catch(() => '');
+  return /limite atteinte|limit reached|insufficient|plus de cr[ée]dit|out of credits?|no credits? (left|remaining)|quota exceeded|cr[ée]dits? [ée]puis|vous n'avez plus/.test(txt);
+}
+
 export async function handleGenerateImage(args) {
   const autoConfirm = args.auto_confirm === true;
   const job = jobQueue.createJob('image_generation', {
@@ -77,12 +182,12 @@ export async function handleGenerateImage(args) {
         `Refus de générer pour éviter des crédits vidéo. Modèles image: ${Object.keys(imageModels).join(', ')}`);
     }
 
-    // STEP 3: Ratio selection
-    const ratio = selectRatio(args.ratio);
-    if (!ratio) {
-      throw new FlowError(ErrorCodes.RATIO_NOT_AVAILABLE,
-        `Ratio "${args.ratio}" not available. Available: ${get('ratios', []).join(', ')}`);
-    }
+    // STEP 3: Ratio selection — explicit arg wins, else infer from prompt, else default
+    const ratios = get('ratios', []);
+    let ratio = (args.ratio && ratios.includes(args.ratio)) ? args.ratio : null;
+    if (!ratio) ratio = inferRatioFromPrompt(args.prompt);
+    if (!ratio || !ratios.includes(ratio)) ratio = ratios.includes('1:1') ? '1:1' : (ratios[0] || '1:1');
+    logger.info('Ratio chosen', { ratio, explicit: args.ratio || null });
 
     // STEP 4: Verify the model selector confirms IMAGE mode (NOT video)
     // Flow's bottom toolbar is always present in a project with a model selector.
@@ -123,6 +228,9 @@ export async function handleGenerateImage(args) {
       logger.warn('Generate button not visible on project page');
     }
 
+    // STEP 4.5: Configure Image mode, aspect ratio, and image count (=1 unless overridden)
+    await configureGeneration(page, { ratio, count: args.quantity || 1, model: args.model });
+
     // STEP 5: Find the prompt input (contenteditable div at bottom toolbar)
     let promptInput = null;
 
@@ -152,10 +260,19 @@ export async function handleGenerateImage(args) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(500);
 
-    // STEP 6: Fill the prompt
+    // STEP 6: Fill the prompt — robustly clear any previous/leftover text first
     await promptInput.click();
-    await promptInput.fill('');
+    await page.keyboard.press('Control+A').catch(() => {});
+    await page.keyboard.press('Delete').catch(() => {});
+    await promptInput.fill('').catch(() => {});
     await page.waitForTimeout(200);
+    // Verify the field is actually empty; if not, clear again.
+    const leftover = (await promptInput.textContent().catch(() => '')) || '';
+    if (leftover.trim()) {
+      await page.keyboard.press('Control+A').catch(() => {});
+      await page.keyboard.press('Backspace').catch(() => {});
+      await page.waitForTimeout(150);
+    }
     await promptInput.type(args.prompt, { delay: 15 });
     logger.info('Prompt filled', { promptLength: args.prompt.length });
     await page.waitForTimeout(500);
@@ -259,6 +376,13 @@ export async function handleGenerateImage(args) {
 
     while (Date.now() - genStart < genTimeoutMs) {
       await page.waitForTimeout(2000);
+
+      // Credit/quota exhausted → signal caller to try another model.
+      if (await detectCreditError(page)) {
+        await takeScreenshot(page, 'credit-exhausted');
+        throw new FlowError(ErrorCodes.GOOGLE_LIMIT_REACHED,
+          `Credit/quota exhausted for model "${model}".`);
+      }
 
       const imageUuids = await page.evaluate(() => {
         const imgs = Array.from(document.querySelectorAll('img'));

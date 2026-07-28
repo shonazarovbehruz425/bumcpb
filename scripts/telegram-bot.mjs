@@ -12,7 +12,7 @@ import fs from 'fs';
 import { get } from '../src/utils/config.js';
 import { launchChromeDirect, closeBrowser, getPage, isBrowserConnected } from '../src/browser/connect.js';
 import { navigateToFlow } from '../src/browser/launch-profile.js';
-import { handleGenerateImage } from '../src/tools/generate-image.js';
+import { generateWithFallback } from '../src/tools/generate-robust.js';
 
 const TOKEN = get('telegramBotToken');
 const ALLOWED = get('telegramAllowedChatId');
@@ -75,16 +75,16 @@ async function generate(chatId, prompt) {
   try {
     await sendMessage(chatId, `🎨 Yasayapman: "${prompt}"\n30-90 soniya...`);
     await ensureBrowser();
-    const genPromise = handleGenerateImage({
+    const genPromise = generateWithFallback({
       prompt,
-      model: 'Nano Banana 2',
-      ratio: '1:1',
       auto_confirm: true,
       project_name: 'Telegram',
       campaign: 'telegram',
+    }, {
+      onModelSwitch: (m) => sendMessage(chatId, `⚠️ Kredit tugadi, boshqa modelga o'tyapman: ${m}`),
     });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Generatsiya timeout (juda uzoq).')), 180000)
+      setTimeout(() => reject(new Error('Generatsiya timeout (juda uzoq).')), 240000)
     );
     const result = await Promise.race([genPromise, timeoutPromise]);
     if (result.files && result.files.length) {

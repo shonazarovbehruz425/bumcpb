@@ -22,7 +22,7 @@ import { fileURLToPath } from 'url';
 import { get } from '../src/utils/config.js';
 import { launchChromeDirect, closeBrowser, getPage, isBrowserConnected } from '../src/browser/connect.js';
 import { navigateToFlow } from '../src/browser/launch-profile.js';
-import { handleGenerateImage } from '../src/tools/generate-image.js';
+import { generateWithFallback } from '../src/tools/generate-robust.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -82,16 +82,17 @@ async function handleGenerate(req, res, host) {
   busy = true;
   try {
     await ensureBrowser();
-    const genPromise = handleGenerateImage({
+    const genPromise = generateWithFallback({
       prompt,
-      model: body.model || 'Nano Banana 2',
-      ratio: body.ratio || '1:1',
+      model: body.model,            // optional; auto-fallback if it runs out of credits
+      ratio: body.ratio,            // optional; auto-inferred from prompt if omitted
+      quantity: body.quantity || 1, // default: 1 image
       auto_confirm: true,
       project_name: body.project_name || 'API',
       campaign: body.campaign || 'api',
     });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('generation_timeout')), 180000)
+      setTimeout(() => reject(new Error('generation_timeout')), 240000)
     );
     const result = await Promise.race([genPromise, timeoutPromise]);
 
