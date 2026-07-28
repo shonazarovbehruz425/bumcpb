@@ -148,7 +148,7 @@ export async function launchChromeDirect(options = {}) {
   ];
   if (headless) args.push('--headless=new');
   if (process.platform === 'linux') {
-    args.push('--no-sandbox', '--disable-dev-shm-usage');
+    args.push('--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu');
   }
 
   logger.info('Launching Chrome directly', { chromePath, cdpPort, headless });

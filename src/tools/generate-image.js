@@ -293,9 +293,11 @@ export async function handleGenerateImage(args) {
 
     for (const uuid of generatedImageUuids) {
       try {
-        const response = await page.goto(
+        // Fetch via the authenticated request context WITHOUT navigating the
+        // page away from the project (keeps Chrome ready for the next job).
+        const response = await page.request.get(
           `https://labs.google/fx/api/trpc/media.getMediaUrlRedirect?name=${uuid}`,
-          { waitUntil: 'load', timeout: 15000 }
+          { timeout: 15000 }
         );
 
         if (response && response.ok()) {
