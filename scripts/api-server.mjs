@@ -25,6 +25,7 @@ import { get } from '../src/utils/config.js';
 import { launchChromeDirect, closeBrowser, getPage, isBrowserConnected } from '../src/browser/connect.js';
 import { navigateToFlow } from '../src/browser/launch-profile.js';
 import { attachResultListener, resetResultListener, submitPrompt, takeResultForPrompt, downloadResult } from '../src/tools/flow-batch.js';
+import { clearProjectMedia, emptyTrash } from '../src/tools/flow-cleanup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
@@ -37,9 +38,11 @@ const JOB_TIMEOUT_MS = get('jobTimeoutMs', 240000);
 const CDP_PORT = get('cdpPort', 9222);
 const RECYCLE_EVERY = get('recycleEveryGenerations', 40); // recycle Chrome after N generations
 const MIN_AVAIL_MB = get('minAvailableMemMB', 300);       // recycle if available RAM drops below this
+const CLEAR_EVERY = get('clearEveryGenerations', 3);      // move gallery to trash after N generations
 
 let genCount = 0;        // total completed generations
 let lastRecycleGen = 0;  // genCount at last recycle
+let lastClearGen = 0;    // genCount at last gallery clear
 
 let API_KEY = get('apiKey');
 if (!API_KEY) {
@@ -150,11 +153,19 @@ async function pump() {
   pumpRunning = true;
   try {
     while (queue.length > 0 || inFlight.size > 0) {
-      // (6) Recycle Chrome at a safe point (nothing in flight) to avoid leaks.
-      if (inFlight.size === 0 && shouldRecycleChrome()) {
-        console.log(`[api] Recycling Chrome (gen ${genCount}, availMB ${availableMemMB()})`);
-        await resetBrowser();
-        lastRecycleGen = genCount;
+      // At a safe point (nothing in flight): periodic cleanup + Chrome recycle.
+      if (inFlight.size === 0) {
+        // Move the accumulated gallery to trash every N generations (keeps DOM light).
+        if (ready && genCount - lastClearGen >= CLEAR_EVERY) {
+          try { const r = await clearProjectMedia(); console.log(`[api] Cleared gallery to trash`, r); } catch {}
+          lastClearGen = genCount;
+        }
+        // (6) Recycle Chrome to avoid memory leaks.
+        if (shouldRecycleChrome()) {
+          console.log(`[api] Recycling Chrome (gen ${genCount}, availMB ${availableMemMB()})`);
+          await resetBrowser();
+          lastRecycleGen = genCount;
+        }
       }
 
       // Fill up to concurrency (submits are serialized; generations overlap)
@@ -213,6 +224,15 @@ async function pump() {
       }
 
       await sleep(1500);
+    }
+    // All jobs drained → final cleanup: move any remaining media to trash + empty it.
+    if (ready) {
+      try {
+        await clearProjectMedia();
+        await emptyTrash();
+        lastClearGen = genCount;
+        console.log('[api] Final cleanup done (gallery cleared, trash emptied).');
+      } catch (e) { console.warn('[api] final cleanup failed:', e.message); }
     }
   } finally {
     pumpRunning = false;

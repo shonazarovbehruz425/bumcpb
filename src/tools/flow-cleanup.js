@@ -61,9 +61,12 @@ export async function emptyTrash() {
     logger.info('Trash emptied');
   }
 
-  // Return to the media view so generation can continue.
-  const back = page.locator('button:has-text("Tous les contenus"), button:has-text("Revenir")').first();
-  if (await clickIfVisible(back)) await page.waitForTimeout(1500);
+  // Return to the media view via URL (reliable): strip the /trash suffix.
+  const base = page.url().replace(/\/trash.*$/, '');
+  try {
+    await page.goto(base, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(2500);
+  } catch {}
   return true;
 }
 
