@@ -106,15 +106,20 @@ async function uploadToS3(relPath) {
 }
 
 // ---------- Browser lifecycle + maintenance ----------
+let ensuring = null;
 async function ensureBrowser() {
   if (ready && isBrowserConnected()) { try { getPage(); return; } catch { ready = false; } }
-  console.log('[api] Launching persistent Chrome...');
-  const { page } = await launchChromeDirect({ headless: true });
-  const nav = await navigateToFlow(page);
-  attachResultListener(page);
-  ready = true;
-  if (nav && nav.authenticated === false) alertAdmin('Google session logged out / verification required. Re-login via VNC.');
-  console.log('[api] Chrome ready and on Google Flow.');
+  if (ensuring) return ensuring; // prevent concurrent double-launch
+  ensuring = (async () => {
+    console.log('[api] Launching persistent Chrome...');
+    const { page } = await launchChromeDirect({ headless: true });
+    const nav = await navigateToFlow(page);
+    attachResultListener(page);
+    ready = true;
+    if (nav && nav.authenticated === false) alertAdmin('Google session logged out / verification required. Re-login via VNC.');
+    console.log('[api] Chrome ready and on Google Flow.');
+  })().finally(() => { ensuring = null; });
+  return ensuring;
 }
 async function resetBrowser() { ready = false; resetResultListener(); try { await closeBrowser(); } catch {} }
 function availableMemMB() { try { const s = fs.readFileSync('/proc/meminfo', 'utf8'); const m = s.match(/MemAvailable:\s+(\d+)\s+kB/); if (m) return Math.round(parseInt(m[1], 10) / 1024); } catch {} return Math.round(os.freemem() / 1048576); }
@@ -226,7 +231,10 @@ async function pump() {
           await ensureBrowser();
           job.status = 'processing'; job.stage = 'submitting'; job.startedAt = Date.now();
           const refInput = job.referenceId && refCache.get(job.referenceId) ? refCache.get(job.referenceId) : job.reference;
-          await submitPrompt({ prompt: job.prompt, ratio: job.ratio, model: job.model, reference: refInput, count: job.count, seed: job.requestedSeed });
+          await Promise.race([
+            submitPrompt({ prompt: job.prompt, ratio: job.ratio, model: job.model, reference: refInput, count: job.count, seed: job.requestedSeed }),
+            new Promise((_, rej) => setTimeout(() => rej(new Error('submit_timeout')), 90000)),
+          ]);
           job.stage = 'rendering'; job.submittedAt = Date.now();
           inFlight.set(id, job); saveJobs();
           console.log(`[api] Submitted ${id}: "${job.prompt}" x${job.count} (inFlight ${inFlight.size}, queued ${queue.length})`);
@@ -235,7 +243,8 @@ async function pump() {
           job.error = e.message; job.code = /content_rejected/i.test(e.message) ? 'content_rejected' : 'error';
           stats.failed++; saveJobs(); fireWebhook(job);
           console.error(`[api] Submit failed ${id}: ${e.message}`);
-          if (!isBrowserConnected()) await resetBrowser();
+          // Reset the browser on hang/disconnect so the next job starts clean.
+          if (/submit_timeout/.test(e.message) || !isBrowserConnected()) await resetBrowser();
         }
         await sleep(1500);
       }
