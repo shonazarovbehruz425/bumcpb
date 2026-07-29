@@ -98,7 +98,8 @@ async function uploadToS3(relPath) {
   try {
     const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
     if (!s3client) s3client = new S3Client({ region: S3CFG.region || 'auto', endpoint: S3CFG.endpoint, credentials: { accessKeyId: S3CFG.accessKeyId, secretAccessKey: S3CFG.secretAccessKey } });
-    const key = relPath.replace(/^outputs\//, '');
+    const prefix = (S3CFG.prefix || '').replace(/^\/+|\/+$/g, '');
+    const key = (prefix ? prefix + '/' : '') + relPath.replace(/^outputs\//, '');
     const ext = path.extname(relPath).toLowerCase();
     await s3client.send(new PutObjectCommand({ Bucket: S3CFG.bucket, Key: key, Body: fs.readFileSync(path.join(PROJECT_ROOT, relPath)), ContentType: ext === '.png' ? 'image/png' : 'image/jpeg' }));
     return (S3CFG.publicBaseUrl || '').replace(/\/$/, '') + '/' + key;
