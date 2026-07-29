@@ -219,6 +219,21 @@ async function main() {
 
   await dumpChips(page, 'AFTER card click');
 
+  // STEP 4: Click the discovered chip remove buttons to verify ingredient clearing
+  console.log('\n[ref] Testing chip clearing by clicking chip remove buttons...');
+  try {
+    const chipRemoveBtns = page.locator('[class*="sc-cd6d3ed7"] button, [class*="sc-e0376cc9"], button[aria-label*="Supprimer"], button[aria-label*="Remove"]');
+    const cnt = await chipRemoveBtns.count();
+    console.log(`[ref] Found ${cnt} chip remove buttons`);
+    for (let i = 0; i < cnt; i++) {
+      console.log(`[ref] Clicking chip remove button #${i}...`);
+      await chipRemoveBtns.first().click().catch(() => {});
+      await page.waitForTimeout(1000);
+    }
+  } catch (e) { console.log('[ref] chip remove test error:', e.message); }
+
+  await dumpChips(page, 'AFTER chip clear test');
+
   try { await takeScreenshot(getPage(), 'discover-ref-clear'); } catch {}
   try { fs.rmSync(tmp, { force: true }); } catch {}
   await closeBrowser();
