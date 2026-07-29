@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-// Discover how to CLEAR/REMOVE reference "ingredient" chips from the composer.
-// We need this so a job's references never leak into the next job (shared
-// persistent composer). Strategy: upload a tiny test image via the file input,
-// wait for the reference chip to appear, then dump the chip element + its
-// remove/close button so we can build a reliable "clear references" step.
+// Discover (a) how a reference "ingredient" actually attaches to the composer,
+// and (b) how to CLEAR/REMOVE it — so a job's references never leak into the
+// next job on the shared persistent composer.
 // Non-destructive. Run with the API stopped:
 //   pm2 stop flow-api; pkill -9 -f chrome; rm -rf /tmp/chrome-kiara-cdp-*
 //   node scripts/discover-ref-clear.mjs
@@ -15,56 +13,76 @@ import { navigateToFlow } from '../src/browser/launch-profile.js';
 import { ensureProjectInContext } from '../src/navigation/project-navigator.js';
 import { takeScreenshot } from '../src/utils/screenshots.js';
 
-// A minimal valid 2x2 PNG (red) so Flow accepts the upload as a reference.
-const PNG_B64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP8z8Dwn4EIwDiqEAAX0wP9' +
-  'Fq0zHwAAAABJRU5ErkJggg==';
+const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
 
-async function dump(page, label) {
+async function makeTestImage() {
+  const tmp = path.join(os.tmpdir(), `flow-ref-discover-${Date.now()}.png`);
+  try {
+    const sharp = (await import('sharp')).default;
+    const buf = await sharp({ create: { width: 512, height: 512, channels: 3, background: { r: 210, g: 60, b: 60 } } }).png().toBuffer();
+    fs.writeFileSync(tmp, buf);
+  } catch {
+    // Fallback: tiny 2x2 red PNG.
+    fs.writeFileSync(tmp, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEklEQVR4nGP8z8Dwn4EIwDiqEAAX0wP9Fq0zHwAAAABJRU5ErkJggg==', 'base64'));
+  }
+  return tmp;
+}
+
+// Dump the file inputs currently in the DOM.
+async function dumpInputs(page, label) {
   const d = await page.evaluate(() => {
-    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 60);
-    const vis = (el) => el.offsetParent !== null || (el.getClientRects && el.getClientRects().length > 0);
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
+    return [...document.querySelectorAll('input[type="file"]')].map((i, idx) => ({
+      idx, accept: i.accept || '', multiple: i.multiple, name: i.name || '', id: clean(i.id),
+      visible: i.offsetParent !== null,
+    }));
+  }).catch(() => []);
+  console.log(`\n----- file inputs @ ${label}: ${d.length} -----`);
+  console.log(JSON.stringify(d, null, 2));
+  return d;
+}
 
-    // Thumbnail preview images that are NOT generated media (i.e. reference chips):
-    // usually blob:/data: src or small size, sitting near the composer.
-    const thumbs = [...document.querySelectorAll('img')]
-      .filter((i) => vis(i) && i.width > 10 && i.width < 120 &&
-        !/media\.getMediaUrlRedirect\?name=/.test(i.src || ''))
+// Look for reference thumbnails near the composer + any remove/close control,
+// AND log the composer subtree so we can see the real chip structure.
+async function dumpChips(page, label) {
+  const d = await page.evaluate(() => {
+    const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
+    const vis = (el) => el && (el.offsetParent !== null || (el.getClientRects && el.getClientRects().length > 0));
+
+    // Find the composer (prompt input) and walk UP a few levels to its toolbar row.
+    const composer = document.querySelector('[contenteditable="true"], textarea');
+    let root = composer;
+    for (let k = 0; k < 5 && root; k++) root = root.parentElement;
+
+    const scope = root || document.body;
+    // Thumbnails inside the composer area that are NOT generated media / profile.
+    const thumbs = [...scope.querySelectorAll('img')]
+      .filter((i) => vis(i) && !/googleusercontent\.com\/a\/|media\.getMediaUrlRedirect\?name=/.test(i.src || ''))
       .map((i) => {
-        // Walk up to find the chip container + any remove button inside it.
-        let el = i, chip = null, removeBtns = [];
-        for (let k = 0; k < 6 && el; k++) {
+        let el = i, chip = null, btns = [];
+        for (let k = 0; k < 5 && el; k++) {
           el = el.parentElement; if (!el) break;
-          const btns = [...el.querySelectorAll('button,[role="button"]')];
-          if (btns.length) {
-            chip = el;
-            removeBtns = btns.map((b) => ({
-              icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')),
-              title: clean(b.getAttribute('title')), cls: clean(b.className), id: clean(b.id),
-            }));
-            break;
-          }
+          const b = [...el.querySelectorAll('button,[role="button"]')];
+          if (b.length && b.length <= 4) { chip = el; btns = b; break; }
         }
         return {
-          srcHead: (i.src || '').slice(0, 40), w: i.width, h: i.height,
-          alt: clean(i.alt), chipCls: chip ? clean(chip.className) : null, removeBtns,
+          srcHead: (i.src || '').slice(0, 45), w: i.width, h: i.height, alt: clean(i.alt),
+          chipCls: chip ? clean(chip.className) : null,
+          chipBtns: btns.map((b) => ({ icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), cls: clean(b.className) })),
         };
       }).slice(0, 12);
 
-    // Any button that looks like a remove/close/clear control.
-    const removeLike = [...document.querySelectorAll('button,[role="button"]')]
-      .filter((b) => vis(b) && /close|clear|cancel|delete|remove|supprimer|retirer|enlever|✕|×/i
-        .test(((b.textContent || '') + ' ' + (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || ''))))
-      .map((b) => ({ icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), title: clean(b.getAttribute('title')), cls: clean(b.className) }))
-      .slice(0, 20);
+    // Buttons inside the composer area whose icon looks like a chip-remove (close/×).
+    const composerRemoveBtns = [...scope.querySelectorAll('button,[role="button"]')]
+      .filter((b) => vis(b) && /^close|✕|×|clear$|cancel/i.test(clean(b.textContent)) )
+      .map((b) => ({ icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), cls: clean(b.className) }))
+      .slice(0, 15);
 
-    return {
-      totalImgs: document.querySelectorAll('img').length,
-      thumbCandidates: thumbs, removeLikeButtons: removeLike,
-    };
+    return { composerFound: !!composer, thumbCandidates: thumbs, composerRemoveBtns };
   }).catch((e) => ({ error: e.message }));
-  console.log(`\n==================== ${label} ====================`);
+  console.log(`\n==================== CHIPS @ ${label} ====================`);
   console.log(JSON.stringify(d, null, 2));
+  return d;
 }
 
 async function main() {
@@ -73,39 +91,66 @@ async function main() {
   await ensureProjectInContext(page, { campaign: 'api' });
   await page.waitForTimeout(3500);
 
-  await dump(page, 'BEFORE upload (baseline — no references)');
+  await dumpInputs(page, 'BEFORE');
+  await dumpChips(page, 'BEFORE');
 
-  // Write the tiny test image and upload it via Flow's hidden file input.
-  const tmp = path.join(os.tmpdir(), `flow-ref-discover-${Date.now()}.png`);
-  fs.writeFileSync(tmp, Buffer.from(PNG_B64, 'base64'));
-  try {
-    const input = page.locator('input[type="file"]').first();
-    await input.setInputFiles(tmp);
-    console.log('\n[ref] uploaded test image, waiting for chip to attach...');
-    await page.waitForTimeout(7000);
-  } catch (e) {
-    console.log('[ref] upload failed:', e.message);
+  // STEP 1: open the "Ajouter un contenu multimédia" menu (the reference/add entry).
+  const addBtn = page.locator('button:has-text("Ajouter un contenu"), button:has-text("add_2"), [aria-label*="Ajouter un contenu"]').first();
+  if (await addBtn.isVisible().catch(() => false)) {
+    await addBtn.click().catch(() => {});
+    console.log('\n[ref] clicked "Ajouter un contenu multimédia"');
+    await page.waitForTimeout(1500);
+    const menu = await page.evaluate(() => {
+      const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
+      return [...document.querySelectorAll('[role="menuitem"], [role="menu"] button, [role="dialog"] button')]
+        .filter((b) => b.offsetParent !== null).map((b) => ({ text: clean(b.textContent), aria: clean(b.getAttribute('aria-label')) })).slice(0, 25);
+    }).catch(() => []);
+    console.log('[ref] add-media menu items:', JSON.stringify(menu, null, 2));
+  } else {
+    console.log('\n[ref] "Ajouter un contenu" button NOT found');
   }
+  await dumpInputs(page, 'AFTER add-menu open');
 
-  await dump(page, 'AFTER upload (reference chip should be present)');
-
-  // Best-effort: try clicking the most likely remove button and see if the
-  // chip disappears (helps confirm the correct selector).
+  // STEP 2: upload the test image via whichever file input accepts images.
+  const tmp = await makeTestImage();
   try {
-    const before = await page.locator('img').count();
-    const candidate = page.locator('button:has-text("close"), button[aria-label*="Supprimer"], button[aria-label*="supprimer"], button[aria-label*="Remove"], button[aria-label*="retirer"]').last();
-    if (await candidate.isVisible().catch(() => false)) {
-      const label = await candidate.getAttribute('aria-label').catch(() => '') || (await candidate.textContent().catch(() => ''));
-      await candidate.click().catch(() => {});
-      await page.waitForTimeout(1500);
-      const after = await page.locator('img').count();
-      console.log(`\n[ref] clicked candidate remove button (label="${(label || '').trim().slice(0, 40)}"): imgs ${before} -> ${after}`);
-    } else {
-      console.log('\n[ref] no obvious remove button candidate was visible');
+    const inputs = page.locator('input[type="file"]');
+    const n = await inputs.count();
+    let uploaded = false;
+    for (let i = 0; i < n; i++) {
+      const acc = await inputs.nth(i).getAttribute('accept').catch(() => '') || '';
+      if (/image|\*/.test(acc) || acc === '') {
+        await inputs.nth(i).setInputFiles(tmp).catch(() => {});
+        console.log(`\n[ref] setInputFiles on input #${i} (accept="${acc}")`);
+        uploaded = true; break;
+      }
     }
-  } catch (e) { console.log('[ref] remove attempt error:', e.message); }
+    if (!uploaded && n > 0) { await inputs.first().setInputFiles(tmp).catch(() => {}); console.log('\n[ref] setInputFiles on first input (fallback)'); }
+    await page.waitForTimeout(8000);
+  } catch (e) { console.log('[ref] upload error:', e.message); }
 
-  await dump(page, 'AFTER remove attempt');
+  const after = await dumpChips(page, 'AFTER upload');
+
+  // STEP 3: if a chip with a button appeared, try its button and re-check.
+  try {
+    const chip = (after.thumbCandidates || []).find((t) => t.chipBtns && t.chipBtns.length);
+    if (chip) {
+      console.log(`\n[ref] chip detected (cls="${chip.chipCls}") with btns:`, JSON.stringify(chip.chipBtns));
+      // Try clicking a button whose icon is "close"-like within that chip via a hover+click.
+      const before = await page.locator('img').count();
+      const btn = page.locator('button:has-text("close"), [role="button"]:has-text("close")').last();
+      if (await btn.isVisible().catch(() => false)) {
+        await btn.click().catch(() => {});
+        await page.waitForTimeout(1500);
+        const now = await page.locator('img').count();
+        console.log(`[ref] clicked composer 'close' button: imgs ${before} -> ${now}`);
+      } else { console.log('[ref] no composer close button visible to test'); }
+    } else {
+      console.log('\n[ref] NO reference chip appeared after upload — upload path may differ.');
+    }
+  } catch (e) { console.log('[ref] remove test error:', e.message); }
+
+  await dumpChips(page, 'AFTER remove attempt');
 
   try { await takeScreenshot(getPage(), 'discover-ref-clear'); } catch {}
   try { fs.rmSync(tmp, { force: true }); } catch {}
