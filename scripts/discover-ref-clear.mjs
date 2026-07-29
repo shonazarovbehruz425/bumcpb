@@ -147,7 +147,17 @@ async function main() {
       }
       if (!uploaded && n > 0) { await inputs.first().setInputFiles(tmp).catch(() => {}); console.log('\n[ref] setInputFiles on first input (fallback)'); }
     }
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(2000);
+
+    // Check for "Notification" consent dialog ("J'accepte") and click it if present
+    const acceptBtn = page.locator('button:has-text("J\'accepte"), button:has-text("Accepter"), button:has-text("Approve"), [role="dialog"] button:has-text("J\'accepte")').first();
+    if (await acceptBtn.isVisible().catch(() => false)) {
+      console.log('\n[ref] Notification consent dialog detected! Clicking "J\'accepte"...');
+      await acceptBtn.click().catch(() => {});
+      await page.waitForTimeout(2000);
+    }
+
+    await page.waitForTimeout(5000);
   } catch (e) { console.log('[ref] upload error:', e.message); }
 
   const after = await dumpChips(page, 'AFTER upload');
