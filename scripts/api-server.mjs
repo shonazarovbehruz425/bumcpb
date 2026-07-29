@@ -132,13 +132,40 @@ function runRetention() {
 }
 
 // ---------- Helpers ----------
+const RATIO_VALUES = { '16:9': 16 / 9, '4:3': 4 / 3, '1:1': 1, '3:4': 3 / 4, '9:16': 9 / 16 };
+function nearestRatio(aspect) {
+  let best = null, bd = Infinity;
+  for (const r of SUPPORTED_RATIOS) { const v = RATIO_VALUES[r]; if (v == null) continue; const d = Math.abs(v - aspect); if (d < bd) { bd = d; best = r; } }
+  return best || '1:1';
+}
 function normalizeRatio(r) { if (!r) return null; if (SUPPORTED_RATIOS.includes(r)) return r; if (RATIO_ALIASES[r] && SUPPORTED_RATIOS.includes(RATIO_ALIASES[r])) return RATIO_ALIASES[r]; return null; }
+
+// Resize/crop a saved image to exact pixel dimensions (needs `sharp`).
+async function resizeImage(relPath, w, h) {
+  try {
+    const sharp = (await import('sharp')).default;
+    const abs = path.join(PROJECT_ROOT, relPath);
+    const buf = await sharp(abs).resize(w, h, { fit: 'cover', position: 'centre' }).toBuffer();
+    fs.writeFileSync(abs, buf);
+    return true;
+  } catch (e) { console.warn('[api] resize skipped (run `npm i sharp`?):', e.message); return false; }
+}
 function applyStyle(prompt, style) { const p = style && STYLE_PRESETS[style]; return p ? `${prompt}, ${p}` : prompt; }
 
 function makeJob(body, host) {
   const style = body.style || null;
   const rawPrompt = (body.prompt || '').trim();
+  // Exact pixel size support: width/height or "size":"1920x1080".
+  let width = parseInt(body.width || 0, 10) || null;
+  let height = parseInt(body.height || 0, 10) || null;
+  if ((!width || !height) && body.size && /^\d+\s*[x×]\s*\d+$/i.test(body.size)) {
+    const [w, h] = body.size.split(/[x×]/i).map((s) => parseInt(s.trim(), 10)); width = w; height = h;
+  }
+  // If exact pixels requested without an explicit ratio, pick the nearest Flow ratio.
+  let ratio = normalizeRatio(body.ratio);
+  if (!ratio && width && height) ratio = nearestRatio(width / height);
   return {
+    width, height,
     id: crypto.randomUUID(),
     batchId: body.batchId || null,
     externalId: body.externalId || body.clientRef || null,
@@ -146,7 +173,7 @@ function makeJob(body, host) {
     prompt: applyStyle(rawPrompt, style),
     originalPrompt: rawPrompt,
     style,
-    ratio: normalizeRatio(body.ratio) || null,
+    ratio: ratio || null,
     model: body.model || null,
     reference: body.reference || null,
     referenceId: body.referenceId || null,
@@ -166,6 +193,7 @@ function publicJob(job, host) {
     prompt: job.originalPrompt || job.prompt, style: job.style,
     status: job.status, stage: job.stage, code: job.code || undefined,
     model: job.model, ratio: job.ratio, aspectRatio: job.aspectRatio, seed: job.seed,
+    width: job.width || undefined, height: job.height || undefined,
     count: job.count, images: (job.images || []).map((im) => imageUrls(im, h)),
     creditsUsed: (job.images || []).length, cost: (job.images || []).length * COST_PER_IMAGE,
     reproduction: { model: job.model, ratio: job.ratio, seed: job.seed },
@@ -216,6 +244,7 @@ async function pump() {
         for (const r of results) {
           try {
             job.stage = 'downloading'; const file = await downloadResult(r, id);
+            if (job.width && job.height) { job.stage = 'resizing'; await resizeImage(file, job.width, job.height); }
             job.stage = 'uploading'; const s3url = await uploadToS3(file);
             job.images.push({ file, s3Url: s3url || undefined });
             if (job.seed == null && r.seed != null) job.seed = r.seed;
