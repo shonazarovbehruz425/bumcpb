@@ -49,25 +49,48 @@ async function dumpChips(page, label) {
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
     const vis = (el) => el && (el.offsetParent !== null || (el.getClientRects && el.getClientRects().length > 0));
 
-    // Scan the WHOLE document for candidate reference thumbnails: blob:/data: srcs,
-    // or any small image that is NOT the user profile / not generated media.
-    const thumbs = [...document.querySelectorAll('img')]
-      .filter((i) => vis(i) && !/googleusercontent\.com\/a\/|media\.getMediaUrlRedirect\?name=/.test(i.src || ''))
+    // Scan the WHOLE document for ALL image elements, background images, svgs, and buttons.
+    const allImgs = [...document.querySelectorAll('img, [style*="background-image"], canvas, svg')]
+      .filter(vis)
       .map((i) => {
+        const style = window.getComputedStyle(i);
+        const bg = style.backgroundImage || '';
+        const src = i.src || i.getAttribute('src') || bg;
+        const rect = i.getBoundingClientRect();
         let el = i, chip = null, btns = [];
         for (let k = 0; k < 6 && el; k++) {
           el = el.parentElement; if (!el) break;
           const b = [...el.querySelectorAll('button,[role="button"]')];
-          if (b.length && b.length <= 4) { chip = el; btns = b; break; }
+          if (b.length && b.length <= 6) { chip = el; btns = b; break; }
         }
         return {
-          srcHead: (i.src || '').slice(0, 50), w: i.width, h: i.height, alt: clean(i.alt),
+          tag: i.tagName,
+          srcHead: clean(src),
+          rect: `${Math.round(rect.width)}x${Math.round(rect.height)} @ (${Math.round(rect.left)},${Math.round(rect.top)})`,
+          alt: clean(i.alt || i.getAttribute('aria-label')),
           chipCls: chip ? clean(chip.className) : null,
           chipBtns: btns.map((b) => ({ icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), cls: clean(b.className) })),
         };
-      }).slice(0, 14);
+      }).slice(0, 25);
 
-    // Any open dialog + its buttons (an import/confirm dialog may appear).
+    // All buttons near composer area or prompt container
+    const composer = document.querySelector('[contenteditable="true"], textarea');
+    let composerContainerBtns = [];
+    if (composer) {
+      let p = composer;
+      for (let k = 0; k < 5 && p; k++) {
+        p = p.parentElement;
+      }
+      if (p) {
+        composerContainerBtns = [...p.querySelectorAll('button, [role="button"]')].map((b) => ({
+          text: clean(b.textContent),
+          aria: clean(b.getAttribute('aria-label')),
+          cls: clean(b.className),
+        }));
+      }
+    }
+
+    // Any open dialog + its buttons
     const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(vis).map((dg) => ({
       heading: clean(dg.querySelector('h1,h2,h3,[role="heading"]')?.textContent),
       buttons: [...dg.querySelectorAll('button,[role="button"]')].filter(vis).map((b) => clean(b.textContent)).slice(0, 15),
@@ -75,12 +98,11 @@ async function dumpChips(page, label) {
 
     // Global buttons whose icon is a chip-remove (close/×).
     const removeBtns = [...document.querySelectorAll('button,[role="button"]')]
-      .filter((b) => vis(b) && /^close$|^close[A-Z]|✕|×|^clear$/.test(clean(b.textContent)))
+      .filter((b) => vis(b) && /^close$|^close[A-Z]|✕|×|^clear$|delete|supprimer|remove/i.test(clean(b.textContent) + ' ' + clean(b.getAttribute('aria-label'))))
       .map((b) => ({ icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), cls: clean(b.className) }))
       .slice(0, 15);
 
-    const composer = document.querySelector('[contenteditable="true"], textarea');
-    return { composerFound: !!composer, totalImgs: document.querySelectorAll('img').length, thumbCandidates: thumbs, dialogs, removeBtns };
+    return { composerFound: !!composer, totalImgs: document.querySelectorAll('img').length, allImgs, composerContainerBtns, dialogs, removeBtns };
   }).catch((e) => ({ error: e.message }));
   console.log(`\n==================== CHIPS @ ${label} ====================`);
   console.log(JSON.stringify(d, null, 2));
