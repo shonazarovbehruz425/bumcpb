@@ -184,26 +184,40 @@ async function main() {
 
   const after = await dumpChips(page, 'AFTER upload');
 
-  // STEP 3: if a chip with a button appeared, try its button and re-check.
+  // STEP 3: Hover over the uploaded media card and inspect action buttons / context menu
+  console.log('\n[ref] Hovering over imported media card to inspect ingredient attachment buttons...');
   try {
-    const chip = (after.thumbCandidates || []).find((t) => t.chipBtns && t.chipBtns.length);
-    if (chip) {
-      console.log(`\n[ref] chip detected (cls="${chip.chipCls}") with btns:`, JSON.stringify(chip.chipBtns));
-      // Try clicking a button whose icon is "close"-like within that chip via a hover+click.
-      const before = await page.locator('img').count();
-      const btn = page.locator('button:has-text("close"), [role="button"]:has-text("close")').last();
-      if (await btn.isVisible().catch(() => false)) {
-        await btn.click().catch(() => {});
-        await page.waitForTimeout(1500);
-        const now = await page.locator('img').count();
-        console.log(`[ref] clicked composer 'close' button: imgs ${before} -> ${now}`);
-      } else { console.log('[ref] no composer close button visible to test'); }
-    } else {
-      console.log('\n[ref] NO reference chip appeared after upload — upload path may differ.');
-    }
-  } catch (e) { console.log('[ref] remove test error:', e.message); }
+    const mediaCard = page.locator('img[src*="media.getMediaUrlRedirect"]').first();
+    if (await mediaCard.isVisible().catch(() => false)) {
+      await mediaCard.hover().catch(() => {});
+      await page.waitForTimeout(1000);
+      
+      const cardOptions = await page.evaluate(() => {
+        const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
+        const vis = (el) => el && (el.offsetParent !== null || (el.getClientRects && el.getClientRects().length > 0));
+        
+        return [...document.querySelectorAll('button, [role="button"], [role="menuitem"]')]
+          .filter(vis)
+          .map((b) => ({ text: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), cls: clean(b.className) }))
+          .slice(0, 30);
+      });
+      console.log('[ref] Buttons visible on media card hover:', JSON.stringify(cardOptions, null, 2));
 
-  await dumpChips(page, 'AFTER remove attempt');
+      // Try clicking any attach button (e.g. "+", "Ingrédient", "Référence", "Utiliser") or three-dots menu
+      const attachBtn = page.locator('button:has-text("Ingrédient"), button:has-text("Référence"), button[aria-label*="référence"], button[aria-label*="ingrédient"]').first();
+      if (await attachBtn.isVisible().catch(() => false)) {
+        console.log('[ref] Found reference attach button! Clicking it...');
+        await attachBtn.click().catch(() => {});
+        await page.waitForTimeout(3000);
+      } else {
+        console.log('[ref] Clicking media card directly...');
+        await mediaCard.click().catch(() => {});
+        await page.waitForTimeout(3000);
+      }
+    }
+  } catch (e) { console.log('[ref] card hover error:', e.message); }
+
+  await dumpChips(page, 'AFTER card click');
 
   try { await takeScreenshot(getPage(), 'discover-ref-clear'); } catch {}
   try { fs.rmSync(tmp, { force: true }); } catch {}
