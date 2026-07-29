@@ -193,3 +193,56 @@ When set, each image is uploaded and `images[].url` becomes the public CDN URL (
 
 ### Config keys summary
 `apiPort, apiKey, apiKeys[], concurrency, jobTimeoutMs, cdpPort, recycleEveryGenerations, minAvailableMemMB, clearEveryGenerations, enableTrashCleanup, auditLog, retentionDays, alertWebhookUrl, defaultWebhookUrl, s3{}`
+
+
+---
+
+## Integration features (v2)
+
+### Per-request options (`/generate` and `/batch` items)
+```json
+{
+  "prompt": "a stickman running",
+  "count": 3,                 // 1-4 images for this prompt (default 1)
+  "ratio": "1:1",             // supported: 16:9,4:3,1:1,3:4,9:16 (aliases like 4:5→3:4 auto-mapped)
+  "style": "stickman",        // named preset from config.stylePresets, appended to the prompt
+  "reference": "https://...", // image-to-image (URL)
+  "referenceId": "abc",       // reuse a pre-registered reference (see /references)
+  "externalId": "frame_042",  // your own id — echoed back in every response
+  "idempotencyKey": "k-042",  // dedupe: same key never generates twice
+  "priority": 10,             // higher = sooner
+  "webhook": "https://..."    // per-request callback
+}
+```
+
+### Job response now includes
+`externalId, stage, seed, count, images[], creditsUsed, cost, reproduction:{model,ratio,seed}, code`.
+- **stage**: `queued → submitting → rendering → downloading → uploading → done`.
+- **seed** + **reproduction**: to reproduce the exact frame later.
+- **code**: e.g. `content_rejected`, `timeout` on failures.
+
+### New endpoints
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/jobs/status` | Bulk status: `{ "ids": [...] }` → statuses of many jobs in ONE call |
+| POST | `/references` | `{ "url": "..." }` → `{ referenceId }` (upload once, reuse many times) |
+| DELETE | `/batch/{batchId}` | Cancel all still-queued jobs in a batch |
+| DELETE | `/jobs/{id}` | Cancel one queued job |
+| POST | `/jobs/{id}/retry` | Retry a failed/cancelled job |
+| GET | `/stats` | includes `images`, `creditsUsed`, `cost` |
+
+### Reliability / ops
+- **Idempotency**: `idempotencyKey` prevents duplicate (paid) generations on retries.
+- **Backpressure**: when the queue is full (`maxQueue`, default 1000) the API returns `429` + `Retry-After` so your client can slow down.
+- **Per-key quota**: `apiKeys: [{ "key": "...", "name": "pro-user", "dailyLimit": 500 }]` → over limit returns `429`.
+- **HMAC webhooks**: set `"webhookSecret"`; each webhook POST includes `X-Signature: sha256=<hmac>` — verify it to reject spoofed callbacks.
+- **Content moderation**: rejected prompts fail with `code: "content_rejected"`.
+- **Cost**: set `"costPerImage"` in config; responses report `creditsUsed` and `cost`.
+
+### Config additions
+`maxQueue, costPerImage, stylePresets{name:promptSuffix}, webhookSecret, apiKeys[].dailyLimit`
+
+### Not yet available (depend on Flow features)
+- **Upscale / inpainting**: Flow tools exist but need separate UI wiring — not implemented yet.
+- **Setting an input seed**: Flow's composer doesn't expose a seed input, so seeds are **returned** (for reproduction/consistency tracking) but cannot be forced. Consistent characters are best achieved via a fixed **reference image** + `referenceId`.
+- **Exact pixel sizes (e.g. 1920×1080)**: Flow offers fixed aspect ratios only; pixel dimensions can't be set (aliases are mapped to the nearest ratio).

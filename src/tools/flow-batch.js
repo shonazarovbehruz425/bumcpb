@@ -36,6 +36,8 @@ export function attachResultListener(page) {
           prompt: gi.prompt || '',
           fifeUrl: gi.fifeUrl || '',
           aspectRatio: gi.aspectRatio || '',
+          seed: (gi.seed !== undefined ? gi.seed : null),
+          modelNameType: gi.modelNameType || null,
           ts: Date.now(),
         });
       }
@@ -57,23 +59,37 @@ export function takeResultForPrompt(prompt) {
   return resultBuffer.splice(idx, 1)[0];
 }
 
+// Take up to n buffered results matching the prompt (for count>1).
+export function takeResultsForPrompt(prompt, n = 1) {
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const i = resultBuffer.findIndex((r) => r.prompt === prompt);
+    if (i === -1) break;
+    out.push(resultBuffer.splice(i, 1)[0]);
+  }
+  return out;
+}
+
 // Type a prompt and click Generate WITHOUT waiting for the image.
 // Returns the ratio actually used.
 // Download reference image URL(s) and upload them to Flow's file input so the
 // next generation uses them as references (image-to-image / "ingredients").
 async function uploadReferences(page, reference) {
-  const urls = (Array.isArray(reference) ? reference : [reference]).filter(Boolean).slice(0, 3);
+  const srcs = (Array.isArray(reference) ? reference : [reference]).filter(Boolean).slice(0, 3);
   const files = [];
-  for (const url of urls) {
+  const tempsToClean = [];
+  for (const src of srcs) {
     try {
-      const resp = await fetch(url);
-      if (!resp.ok) { logger.warn('reference fetch failed', { url: String(url).slice(0, 80), status: resp.status }); continue; }
+      // Cached local reference file (from a referenceId) — use directly.
+      if (typeof src === 'string' && !/^https?:\/\//i.test(src) && fs.existsSync(src)) { files.push(src); continue; }
+      const resp = await fetch(src);
+      if (!resp.ok) { logger.warn('reference fetch failed', { url: String(src).slice(0, 80), status: resp.status }); continue; }
       const buf = Buffer.from(await resp.arrayBuffer());
       const ct = resp.headers.get('content-type') || '';
       const ext = ct.includes('png') ? '.png' : ct.includes('webp') ? '.webp' : '.jpg';
       const tmp = path.join(os.tmpdir(), `flow-ref-${Date.now()}-${files.length}${ext}`);
       fs.writeFileSync(tmp, buf);
-      files.push(tmp);
+      files.push(tmp); tempsToClean.push(tmp);
     } catch (e) { logger.warn('reference download error', { error: e.message }); }
   }
   if (!files.length) return false;
@@ -89,7 +105,8 @@ async function uploadReferences(page, reference) {
     logger.warn('reference upload failed', { error: e.message });
     return false;
   } finally {
-    for (const f of files) { try { fs.rmSync(f, { force: true }); } catch {} }
+    // Only delete temp downloads, not cached reference files.
+    for (const f of tempsToClean) { try { fs.rmSync(f, { force: true }); } catch {} }
   }
 }
 
@@ -119,8 +136,9 @@ async function waitForComposer(page, ms = 30000) {
   return false;
 }
 
-export async function submitPrompt({ prompt, ratio, model, reference }) {
+export async function submitPrompt({ prompt, ratio, model, reference, count }) {
   const page = getPage();
+  const desiredCount = Math.min(Math.max(parseInt(count || 1, 10), 1), 4);
   await ensureProjectInContext(page, { campaign: 'api' });
 
 
@@ -145,9 +163,9 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
   let needConfig = true;
   if (!model) {
     const cur = await currentSettings(page);
-    if (cur && cur.ratio === r && cur.count === 1) { needConfig = false; }
+    if (cur && cur.ratio === r && cur.count === desiredCount) { needConfig = false; }
   }
-  if (needConfig) await configureGeneration(page, { ratio: r, count: 1, model });
+  if (needConfig) await configureGeneration(page, { ratio: r, count: desiredCount, model });
 
   // Reference image(s) for image-to-image: download then upload via Flow's file input.
   if (reference) {
@@ -188,7 +206,7 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
   }
   await genBtn.click();
 
-  // Handle a possible Agent "Accepter/Approve" confirmation (rare in image mode → short window)
+  // Handle a possible Agent "Accepter/Approve" confirmation + detect content rejection.
   const t0 = Date.now();
   while (Date.now() - t0 < 1500) {
     const txt = await page.evaluate(() => document.body.innerText).catch(() => '');
@@ -196,9 +214,12 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
       await page.locator('button').filter({ hasText: /Accepter|Approve/ }).first().click().catch(() => {});
       break;
     }
+    if (/enfreint|non autoris|va à l'encontre|policy|not allowed|cannot generate|bloqué|violat/i.test(txt)) {
+      throw new FlowError(ErrorCodes.INVALID_PARAMS, 'content_rejected: prompt was rejected by Flow content policy');
+    }
     await page.waitForTimeout(300);
   }
-  return { ratio: r };
+  return { ratio: r, count: desiredCount };
 }
 
 // Download a captured result to outputs/images and return the relative path.
