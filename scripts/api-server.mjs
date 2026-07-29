@@ -106,6 +106,16 @@ async function uploadToS3(relPath) {
   } catch (e) { console.warn('[api] S3 upload skipped:', e.message); return null; }
 }
 
+// Upload a job's images to R2 in the background, then fire its webhook.
+// Keeps the generation pipeline fast (no waiting for uploads).
+function finalizeUploads(job) {
+  if (!(S3CFG && S3CFG.bucket)) { fireWebhook(job); return; }
+  (async () => {
+    for (const img of job.images) { if (!img.s3Url) { const u = await uploadToS3(img.file); if (u) img.s3Url = u; } }
+    saveJobs(); fireWebhook(job);
+  })().catch(() => { fireWebhook(job); });
+}
+
 // ---------- Browser lifecycle + maintenance ----------
 let ensuring = null;
 async function ensureBrowser() {
@@ -256,8 +266,7 @@ async function pump() {
           try {
             job.stage = 'downloading'; const file = await downloadResult(r, id);
             if (job.width && job.height) { job.stage = 'resizing'; await resizeImage(file, job.width, job.height); }
-            job.stage = 'uploading'; const s3url = await uploadToS3(file);
-            job.images.push({ file, s3Url: s3url || undefined });
+            job.images.push({ file }); // R2 upload happens in the background (finalizeUploads)
             if (job.seed == null && r.seed != null) job.seed = r.seed;
             if (r.aspectRatio) job.aspectRatio = r.aspectRatio;
           } catch (e) { console.warn(`[api] download err ${id}: ${e.message}`); }
@@ -265,11 +274,11 @@ async function pump() {
         if (job.images.length >= job.count) {
           job.status = 'done'; job.stage = 'done'; job.finishedAt = Date.now();
           stats.done++; stats.images += job.images.length; stats.totalMs += (job.finishedAt - (job.startedAt || job.finishedAt));
-          genCount++; inFlight.delete(id); saveJobs(); fireWebhook(job); console.log(`[api] Done ${id} (${job.images.length} img)`);
+          genCount++; inFlight.delete(id); saveJobs(); finalizeUploads(job); console.log(`[api] Done ${id} (${job.images.length} img)`);
         } else if (Date.now() - job.submittedAt > JOB_TIMEOUT_MS) {
           if (job.images.length > 0) { job.status = 'done'; job.stage = 'done'; stats.done++; stats.images += job.images.length; }
           else { job.status = 'failed'; job.error = 'timeout'; job.code = 'timeout'; stats.failed++; }
-          job.finishedAt = Date.now(); genCount++; inFlight.delete(id); saveJobs(); fireWebhook(job); console.error(`[api] Timeout ${id}`);
+          job.finishedAt = Date.now(); genCount++; inFlight.delete(id); saveJobs(); finalizeUploads(job); console.error(`[api] Timeout ${id}`);
         }
       }
       await sleep(1500);
