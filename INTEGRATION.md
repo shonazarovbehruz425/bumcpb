@@ -204,7 +204,6 @@ When set, each image is uploaded and `images[].url` becomes the public CDN URL (
 {
   "prompt": "a stickman running",
   "count": 3,                 // 1-4 images for this prompt (default 1)
-  "seed": 713014,             // fixed seed for reproducible/consistent output (optional)
   "ratio": "1:1",             // supported: 16:9,4:3,1:1,3:4,9:16 (aliases like 4:5→3:4 auto-mapped)
   "width": 1920, "height": 1080,  // OR "size":"1920x1080" — exact pixels (needs sharp)
   "style": "stickman",        // named preset from config.stylePresets, appended to the prompt
@@ -244,8 +243,8 @@ When set, each image is uploaded and `images[].url` becomes the public CDN URL (
 ### Config additions
 `maxQueue, costPerImage, stylePresets{name:promptSuffix}, webhookSecret, apiKeys[].dailyLimit`
 
-### Seed (fixed / reproducible) ✅
-`"seed": 713014` forces the generation seed (injected into Flow's request) → the same seed + prompt reproduces the same character/style. The actual seed is returned in `seed` / `reproduction.seed`. Omit it for a random seed (still returned).
+### Seed (returned) ⚠️
+The actual generation seed is **returned** in `seed` / `reproduction.seed` (for tracking/analytics). **Setting** an input seed is not supported: request interception is unreliable over the CDP-attached browser. For consistent characters/style, use a fixed **reference image** (`reference` / `referenceId`).
 
 ### Exact pixel sizes ✅ (requires `sharp` on the server)
 `"width": 1920, "height": 1080` (or `"size": "1920x1080"`). Flow renders the nearest aspect ratio, then the server crops/resizes to the exact pixels (`fit: cover`). Install once: `npm i sharp`.

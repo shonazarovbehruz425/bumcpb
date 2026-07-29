@@ -222,21 +222,9 @@ export async function submitPrompt({ prompt, ratio, model, reference, count, see
     throw new FlowError(ErrorCodes.GENERATION_BUTTON_DISABLED, 'Generate button disabled');
   }
 
-  // #1 Seed injection: intercept the generation request and force our seed
-  // so the same seed reproduces the same character/style.
-  let seedRoute = null;
-  const seedNum = (seed !== undefined && seed !== null && seed !== '') ? parseInt(seed, 10) : null;
-  if (seedNum != null && !Number.isNaN(seedNum)) {
-    seedRoute = async (route) => {
-      try {
-        let b = route.request().postData() || '';
-        if (b && /"seed":/.test(b)) b = b.replace(/"seed":\s*-?\d+/g, `"seed":${seedNum}`);
-        await route.continue({ postData: b || undefined });
-      } catch { try { await route.continue(); } catch {} }
-    };
-    await page.route('**/flowMedia:batchGenerateImages', seedRoute).catch(() => {});
-  }
-
+  // NOTE: input-seed injection via request interception is unreliable over a
+  // connectOverCDP-attached browser (page.route can hang), so it is disabled.
+  // The actual seed is still captured and returned for reproduction tracking.
   await genBtn.click();
 
   // Handle a possible Agent "Accepter/Approve" confirmation + detect content rejection.
@@ -252,9 +240,6 @@ export async function submitPrompt({ prompt, ratio, model, reference, count, see
     }
     await page.waitForTimeout(300);
   }
-
-  // Remove the seed route (request already sent).
-  if (seedRoute) { await page.unroute('**/flowMedia:batchGenerateImages', seedRoute).catch(() => {}); }
 
   return { ratio: r, count: desiredCount };
 }
