@@ -100,6 +100,24 @@ export function takeResultsForPrompt(prompt, n = 1) {
   return out;
 }
 
+// Clear any leftover ingredient reference chips attached to the composer
+export async function clearReferences(page) {
+  try {
+    const chipRemoveBtns = page.locator('[class*="sc-cd6d3ed7"] button, button[class*="sc-e0376cc9"], button[aria-label*="Supprimer"], button[aria-label*="Remove"]');
+    const cnt = await chipRemoveBtns.count().catch(() => 0);
+    if (cnt > 0) {
+      logger.info('Clearing leftover composer reference chips', { count: cnt });
+      for (let i = 0; i < cnt; i++) {
+        await chipRemoveBtns.first().click().catch(() => {});
+        await page.waitForTimeout(300);
+      }
+      await page.waitForTimeout(300);
+    }
+  } catch (e) {
+    logger.warn('Error clearing composer reference chips', { error: e.message });
+  }
+}
+
 // Type a prompt and click Generate WITHOUT waiting for the image.
 // Returns the ratio actually used.
 // Download reference image URL(s) and upload them to Flow's file input so the
@@ -127,9 +145,31 @@ async function uploadReferences(page, reference) {
   try {
     const input = page.locator('input[type="file"]').first();
     await input.setInputFiles(files);
-    // Wait for the upload to attach (reference chips / ingredients appear).
-    await page.waitForTimeout(6000);
-    logger.info('Reference image(s) uploaded', { count: files.length });
+    await page.waitForTimeout(1500);
+
+    // If "Notification" consent dialog appears ("J'accepte"), click it
+    const acceptBtn = page.locator('button:has-text("J\'accepte"), button:has-text("Accepter"), [role="dialog"] button:has-text("J\'accepte")').first();
+    if (await acceptBtn.isVisible().catch(() => false)) {
+      await acceptBtn.click().catch(() => {});
+      await page.waitForTimeout(1500);
+    }
+
+    // Attach uploaded media to composer if not automatically attached as chip
+    const hasChip = await page.locator('[class*="sc-cd6d3ed7"]').first().isVisible().catch(() => false);
+    if (!hasChip) {
+      const mediaCard = page.locator('img[src*="media.getMediaUrlRedirect"]').first();
+      if (await mediaCard.isVisible().catch(() => false)) {
+        const attachBtn = page.locator('button:has-text("Ingrédient"), button:has-text("Référence"), button[aria-label*="référence"]').first();
+        if (await attachBtn.isVisible().catch(() => false)) {
+          await attachBtn.click().catch(() => {});
+        } else {
+          await mediaCard.click().catch(() => {});
+        }
+      }
+    }
+
+    await page.waitForTimeout(3000);
+    logger.info('Reference image(s) uploaded and attached', { count: files.length });
     return true;
   } catch (e) {
     logger.warn('reference upload failed', { error: e.message });
@@ -196,6 +236,9 @@ export async function submitPrompt({ prompt, ratio, model, reference, count, see
     if (cur && cur.ratio === r && cur.count === desiredCount) { needConfig = false; }
   }
   if (needConfig) await configureGeneration(page, { ratio: r, count: desiredCount, model });
+
+  // Clear any existing reference chips from previous jobs to prevent reference leakage.
+  await clearReferences(page);
 
   // Reference image(s) for image-to-image: download then upload via Flow's file input.
   if (reference) {
