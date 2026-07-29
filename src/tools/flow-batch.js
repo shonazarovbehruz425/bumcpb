@@ -133,6 +133,15 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
     await uploadReferences(page, reference);
   }
 
+  // Dismiss any open popover/dialog overlay that could intercept clicks on the composer.
+  for (let i = 0; i < 4; i++) {
+    const blocked = await page.locator('[data-state="open"][aria-hidden="true"]').first().isVisible().catch(() => false);
+    if (!blocked) break;
+    await page.keyboard.press('Escape').catch(() => {});
+    await page.mouse.click(5, 5).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+
   // Find the prompt input
   let input = null;
   for (const c of [page.locator('[contenteditable="true"]').first(), page.locator('textarea').first()]) {

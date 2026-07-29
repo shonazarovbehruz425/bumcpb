@@ -119,9 +119,12 @@ export async function configureGeneration(page, { ratio, count, model }) {
     }
   }
 
-  // Close the popover
+  // Close the popover robustly (Escape twice + click a neutral spot).
   await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(300);
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.mouse.click(5, 5).catch(() => {});
+  await page.waitForTimeout(600);
 }
 
 // Detect a credit/quota EXHAUSTION message on the page (specific phrases only,
