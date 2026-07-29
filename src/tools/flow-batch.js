@@ -1,6 +1,7 @@
 // Concurrent generation primitives using Flow's internal API for reliable
 // prompt <-> image correlation (captured from flowMedia:batchGenerateImages).
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getPage } from '../browser/connect.js';
@@ -58,6 +59,40 @@ export function takeResultForPrompt(prompt) {
 
 // Type a prompt and click Generate WITHOUT waiting for the image.
 // Returns the ratio actually used.
+// Download reference image URL(s) and upload them to Flow's file input so the
+// next generation uses them as references (image-to-image / "ingredients").
+async function uploadReferences(page, reference) {
+  const urls = (Array.isArray(reference) ? reference : [reference]).filter(Boolean).slice(0, 3);
+  const files = [];
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) { logger.warn('reference fetch failed', { url: String(url).slice(0, 80), status: resp.status }); continue; }
+      const buf = Buffer.from(await resp.arrayBuffer());
+      const ct = resp.headers.get('content-type') || '';
+      const ext = ct.includes('png') ? '.png' : ct.includes('webp') ? '.webp' : '.jpg';
+      const tmp = path.join(os.tmpdir(), `flow-ref-${Date.now()}-${files.length}${ext}`);
+      fs.writeFileSync(tmp, buf);
+      files.push(tmp);
+    } catch (e) { logger.warn('reference download error', { error: e.message }); }
+  }
+  if (!files.length) return false;
+
+  try {
+    const input = page.locator('input[type="file"]').first();
+    await input.setInputFiles(files);
+    // Wait for the upload to attach (reference chips / ingredients appear).
+    await page.waitForTimeout(6000);
+    logger.info('Reference image(s) uploaded', { count: files.length });
+    return true;
+  } catch (e) {
+    logger.warn('reference upload failed', { error: e.message });
+    return false;
+  } finally {
+    for (const f of files) { try { fs.rmSync(f, { force: true }); } catch {} }
+  }
+}
+
 // Wait until the generation composer (prompt input) is actually present.
 async function waitForComposer(page, ms = 30000) {
   const end = Date.now() + ms;
@@ -73,12 +108,7 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
   const page = getPage();
   await ensureProjectInContext(page, { campaign: 'api' });
 
-  // Reference image (image-to-image): accepted and logged. Attaching a reference
-  // into the Flow composer requires a file-upload UI step (planned). For now the
-  // prompt is generated as text-to-image; the reference is recorded on the job.
-  if (reference) {
-    logger.info('Reference image provided (text-to-image used for now)', { reference: String(reference).slice(0, 80) });
-  }
+
 
   // Wait for the composer to load; if missing, reload the project once and wait again.
   let composerReady = await waitForComposer(page, 30000);
@@ -97,6 +127,11 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
   if (!r || !ratios.includes(r)) r = ratios.includes('1:1') ? '1:1' : (ratios[0] || '1:1');
 
   await configureGeneration(page, { ratio: r, count: 1, model });
+
+  // Reference image(s) for image-to-image: download then upload via Flow's file input.
+  if (reference) {
+    await uploadReferences(page, reference);
+  }
 
   // Find the prompt input
   let input = null;
