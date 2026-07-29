@@ -51,7 +51,7 @@ async function openSettingsPopover(page) {
   const trigger = page.locator('button:has-text("crop_")').first();
   if (await trigger.isVisible().catch(() => false)) {
     await trigger.click().catch(() => {});
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(700);
     return true;
   }
   return false;
@@ -64,7 +64,7 @@ async function clickTabBySuffix(page, suffix, exactEnd) {
   const el = page.locator(sel).first();
   if (await el.isVisible().catch(() => false)) {
     await el.click().catch(() => {});
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(250);
     return true;
   }
   return false;
@@ -121,10 +121,10 @@ export async function configureGeneration(page, { ratio, count, model }) {
 
   // Close the popover robustly (Escape twice + click a neutral spot).
   await page.keyboard.press('Escape').catch(() => {});
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(200);
   await page.keyboard.press('Escape').catch(() => {});
   await page.mouse.click(5, 5).catch(() => {});
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(400);
 }
 
 // Detect a credit/quota EXHAUSTION message on the page (specific phrases only,

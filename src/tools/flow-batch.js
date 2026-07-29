@@ -93,6 +93,21 @@ async function uploadReferences(page, reference) {
   }
 }
 
+// Read the CURRENT ratio + image count from the toolbar settings button
+// (text like "... crop_16_9 x1"), without opening the popover.
+async function currentSettings(page) {
+  return page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) => /crop_/.test(b.textContent || '') && b.offsetParent !== null);
+    if (!btn) return null;
+    const t = btn.textContent || '';
+    const map = { 'crop_16_9': '16:9', 'crop_9_16': '9:16', 'crop_square': '1:1', 'crop_landscape': '4:3', 'crop_portrait': '3:4' };
+    let ratio = null;
+    for (const k of Object.keys(map)) { if (t.includes(k)) { ratio = map[k]; break; } }
+    const m = t.match(/x(\d)/);
+    return { ratio, count: m ? parseInt(m[1], 10) : null };
+  }).catch(() => null);
+}
+
 // Wait until the generation composer (prompt input) is actually present.
 async function waitForComposer(page, ms = 30000) {
   const end = Date.now() + ms;
@@ -126,7 +141,13 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
   let r = (ratio && ratios.includes(ratio)) ? ratio : inferRatioFromPrompt(prompt);
   if (!r || !ratios.includes(r)) r = ratios.includes('1:1') ? '1:1' : (ratios[0] || '1:1');
 
-  await configureGeneration(page, { ratio: r, count: 1, model });
+  // #5: only (re)configure if the current ratio/count don't already match.
+  let needConfig = true;
+  if (!model) {
+    const cur = await currentSettings(page);
+    if (cur && cur.ratio === r && cur.count === 1) { needConfig = false; }
+  }
+  if (needConfig) await configureGeneration(page, { ratio: r, count: 1, model });
 
   // Reference image(s) for image-to-image: download then upload via Flow's file input.
   if (reference) {
@@ -155,8 +176,8 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
   await page.keyboard.press('Delete').catch(() => {});
   await input.fill('').catch(() => {});
   await page.waitForTimeout(150);
-  await input.type(prompt, { delay: 10 });
-  await page.waitForTimeout(300);
+  await input.type(prompt, { delay: 4 });
+  await page.waitForTimeout(150);
 
   const genBtn = page.locator('button:has-text("arrow_forward"), button:has-text("Generate")').first();
   if (!(await genBtn.isVisible().catch(() => false))) {
@@ -167,15 +188,15 @@ export async function submitPrompt({ prompt, ratio, model, reference }) {
   }
   await genBtn.click();
 
-  // Handle a possible Agent "Accepter/Approve" confirmation (short window)
+  // Handle a possible Agent "Accepter/Approve" confirmation (rare in image mode → short window)
   const t0 = Date.now();
-  while (Date.now() - t0 < 4000) {
+  while (Date.now() - t0 < 1500) {
     const txt = await page.evaluate(() => document.body.innerText).catch(() => '');
     if (/Accepter|Approve/.test(txt)) {
       await page.locator('button').filter({ hasText: /Accepter|Approve/ }).first().click().catch(() => {});
       break;
     }
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(300);
   }
   return { ratio: r };
 }
