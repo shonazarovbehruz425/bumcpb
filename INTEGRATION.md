@@ -172,8 +172,11 @@ GET /stats   → { generated, failed, pending, inFlight, avgMs, successRate, cre
 GET /health  → { ok, chromeReady, cdpHealthy, account, queue }
 ```
 
-### Reference image (image-to-image) — experimental
-`"reference": "https://.../img.jpg"` is accepted and recorded on the job. Attaching it into the Flow composer (file upload) is not yet wired, so generation currently runs text-to-image. Planned.
+### Reference image (image-to-image) ✅
+Add `"reference": "https://.../img.jpg"` (or an array of up to 3 URLs) to a `/generate` or `/batch` request. The API downloads the reference(s), uploads them into Flow, and generates using them as ingredients:
+```json
+{ "prompt": "transform into a watercolor painting", "reference": "https://example.com/photo.jpg" }
+```
 
 ### Optional cloud storage (S3 / Cloudflare R2)
 Requires `npm i @aws-sdk/client-s3` on the server + config:
