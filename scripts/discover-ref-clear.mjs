@@ -49,36 +49,38 @@ async function dumpChips(page, label) {
     const clean = (s) => (s || '').replace(/\s+/g, ' ').trim().substring(0, 70);
     const vis = (el) => el && (el.offsetParent !== null || (el.getClientRects && el.getClientRects().length > 0));
 
-    // Find the composer (prompt input) and walk UP a few levels to its toolbar row.
-    const composer = document.querySelector('[contenteditable="true"], textarea');
-    let root = composer;
-    for (let k = 0; k < 5 && root; k++) root = root.parentElement;
-
-    const scope = root || document.body;
-    // Thumbnails inside the composer area that are NOT generated media / profile.
-    const thumbs = [...scope.querySelectorAll('img')]
+    // Scan the WHOLE document for candidate reference thumbnails: blob:/data: srcs,
+    // or any small image that is NOT the user profile / not generated media.
+    const thumbs = [...document.querySelectorAll('img')]
       .filter((i) => vis(i) && !/googleusercontent\.com\/a\/|media\.getMediaUrlRedirect\?name=/.test(i.src || ''))
       .map((i) => {
         let el = i, chip = null, btns = [];
-        for (let k = 0; k < 5 && el; k++) {
+        for (let k = 0; k < 6 && el; k++) {
           el = el.parentElement; if (!el) break;
           const b = [...el.querySelectorAll('button,[role="button"]')];
           if (b.length && b.length <= 4) { chip = el; btns = b; break; }
         }
         return {
-          srcHead: (i.src || '').slice(0, 45), w: i.width, h: i.height, alt: clean(i.alt),
+          srcHead: (i.src || '').slice(0, 50), w: i.width, h: i.height, alt: clean(i.alt),
           chipCls: chip ? clean(chip.className) : null,
           chipBtns: btns.map((b) => ({ icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), cls: clean(b.className) })),
         };
-      }).slice(0, 12);
+      }).slice(0, 14);
 
-    // Buttons inside the composer area whose icon looks like a chip-remove (close/×).
-    const composerRemoveBtns = [...scope.querySelectorAll('button,[role="button"]')]
-      .filter((b) => vis(b) && /^close|✕|×|clear$|cancel/i.test(clean(b.textContent)) )
+    // Any open dialog + its buttons (an import/confirm dialog may appear).
+    const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(vis).map((dg) => ({
+      heading: clean(dg.querySelector('h1,h2,h3,[role="heading"]')?.textContent),
+      buttons: [...dg.querySelectorAll('button,[role="button"]')].filter(vis).map((b) => clean(b.textContent)).slice(0, 15),
+    }));
+
+    // Global buttons whose icon is a chip-remove (close/×).
+    const removeBtns = [...document.querySelectorAll('button,[role="button"]')]
+      .filter((b) => vis(b) && /^close$|^close[A-Z]|✕|×|^clear$/.test(clean(b.textContent)))
       .map((b) => ({ icon: clean(b.textContent), aria: clean(b.getAttribute('aria-label')), cls: clean(b.className) }))
       .slice(0, 15);
 
-    return { composerFound: !!composer, thumbCandidates: thumbs, composerRemoveBtns };
+    const composer = document.querySelector('[contenteditable="true"], textarea');
+    return { composerFound: !!composer, totalImgs: document.querySelectorAll('img').length, thumbCandidates: thumbs, dialogs, removeBtns };
   }).catch((e) => ({ error: e.message }));
   console.log(`\n==================== CHIPS @ ${label} ====================`);
   console.log(JSON.stringify(d, null, 2));
@@ -94,7 +96,7 @@ async function main() {
   await dumpInputs(page, 'BEFORE');
   await dumpChips(page, 'BEFORE');
 
-  // STEP 1: open the "Ajouter un contenu multimédia" menu (the reference/add entry).
+  // STEP 1: open the "Ajouter un contenu multimédia" menu.
   const addBtn = page.locator('button:has-text("Ajouter un contenu"), button:has-text("add_2"), [aria-label*="Ajouter un contenu"]').first();
   if (await addBtn.isVisible().catch(() => false)) {
     await addBtn.click().catch(() => {});
@@ -111,21 +113,40 @@ async function main() {
   }
   await dumpInputs(page, 'AFTER add-menu open');
 
-  // STEP 2: upload the test image via whichever file input accepts images.
+  // STEP 2: click "Importer l'élément multimédia" and upload test image via filechooser or input.
   const tmp = await makeTestImage();
   try {
-    const inputs = page.locator('input[type="file"]');
-    const n = await inputs.count();
+    const importItem = page.locator('[role="menuitem"]:has-text("Importer"), button:has-text("Importer")').first();
     let uploaded = false;
-    for (let i = 0; i < n; i++) {
-      const acc = await inputs.nth(i).getAttribute('accept').catch(() => '') || '';
-      if (/image|\*/.test(acc) || acc === '') {
-        await inputs.nth(i).setInputFiles(tmp).catch(() => {});
-        console.log(`\n[ref] setInputFiles on input #${i} (accept="${acc}")`);
-        uploaded = true; break;
+
+    if (await importItem.isVisible().catch(() => false)) {
+      console.log('[ref] clicking "Importer" menu item with filechooser listener...');
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null),
+        importItem.click().catch(() => {}),
+      ]);
+      if (fileChooser) {
+        await fileChooser.setFiles(tmp);
+        console.log('[ref] uploaded via fileChooser event');
+        uploaded = true;
+      } else {
+        console.log('[ref] fileChooser event timeout, falling back to setInputFiles');
       }
     }
-    if (!uploaded && n > 0) { await inputs.first().setInputFiles(tmp).catch(() => {}); console.log('\n[ref] setInputFiles on first input (fallback)'); }
+
+    if (!uploaded) {
+      const inputs = page.locator('input[type="file"]');
+      const n = await inputs.count();
+      for (let i = 0; i < n; i++) {
+        const acc = await inputs.nth(i).getAttribute('accept').catch(() => '') || '';
+        if (/image|\*/.test(acc) || acc === '') {
+          await inputs.nth(i).setInputFiles(tmp).catch(() => {});
+          console.log(`\n[ref] setInputFiles on input #${i} (accept="${acc}")`);
+          uploaded = true; break;
+        }
+      }
+      if (!uploaded && n > 0) { await inputs.first().setInputFiles(tmp).catch(() => {}); console.log('\n[ref] setInputFiles on first input (fallback)'); }
+    }
     await page.waitForTimeout(8000);
   } catch (e) { console.log('[ref] upload error:', e.message); }
 
