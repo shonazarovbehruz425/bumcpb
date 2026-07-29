@@ -19,6 +19,18 @@ let listenerAttached = false;
 const resultBuffer = []; // { name, prompt, fifeUrl, aspectRatio, seed, ts }
 let creditsRemaining = null;
 let creditsInitial = null;
+let creditsUrl = null;
+
+// Proactively refresh the credit balance (frontend only fetches it on load).
+export async function refreshCredits() {
+  if (!creditsUrl) return;
+  try {
+    const page = getPage();
+    const r = await page.request.get(creditsUrl, { timeout: 10000 });
+    const j = await r.json().catch(() => null);
+    if (j && typeof j.credits === 'number') { creditsRemaining = j.credits; if (creditsInitial == null) creditsInitial = j.credits; }
+  } catch {}
+}
 
 // Latest real credit balance from Flow's /v1/credits endpoint.
 export function getCredits() {
@@ -38,6 +50,7 @@ export function attachResultListener(page) {
     try {
       const url = resp.url();
       if (/\/v1\/credits/.test(url)) {
+        creditsUrl = url;
         const j = await resp.json().catch(() => null);
         if (j && typeof j.credits === 'number') { creditsRemaining = j.credits; if (creditsInitial == null) creditsInitial = j.credits; }
         return;

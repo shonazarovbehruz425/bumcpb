@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { get } from '../src/utils/config.js';
 import { launchChromeDirect, closeBrowser, getPage, isBrowserConnected } from '../src/browser/connect.js';
 import { navigateToFlow } from '../src/browser/launch-profile.js';
-import { attachResultListener, resetResultListener, submitPrompt, takeResultsForPrompt, downloadResult, getCredits } from '../src/tools/flow-batch.js';
+import { attachResultListener, resetResultListener, submitPrompt, takeResultsForPrompt, downloadResult, getCredits, refreshCredits } from '../src/tools/flow-batch.js';
 import { trashImages, emptyTrash } from '../src/tools/flow-cleanup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -389,5 +389,8 @@ server.listen(PORT, () => {
 setInterval(async () => {
   cleanTempProfiles();
   if (Date.now() - lastRetention > 3600000) { lastRetention = Date.now(); runRetention(); }
-  if (!pumpRunning && inFlight.size === 0 && ready) { if (!(await cdpHealthy())) { console.log('[api] CDP unresponsive while idle — resetting Chrome.'); await resetBrowser(); alertAdmin('CDP was unresponsive; Chrome reset.'); } }
+  if (!pumpRunning && inFlight.size === 0 && ready) {
+    if (!(await cdpHealthy())) { console.log('[api] CDP unresponsive while idle — resetting Chrome.'); await resetBrowser(); alertAdmin('CDP was unresponsive; Chrome reset.'); }
+    else { await refreshCredits(); }
+  }
 }, 60000);

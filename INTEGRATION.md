@@ -250,7 +250,7 @@ The actual generation seed is **returned** in `seed` / `reproduction.seed` (for 
 `"width": 1920, "height": 1080` (or `"size": "1920x1080"`). Flow renders the nearest aspect ratio, then the server crops/resizes to the exact pixels (`fit: cover`). Install once: `npm i sharp`.
 
 ### Real credits / cost ✅
-The API reads Flow's live `/v1/credits` balance. `GET /stats` returns `creditsRemaining`, `creditsSpent` (since start), and `realCreditsPerImage`. `GET /health` also returns `creditsRemaining`.
+Image generation in Flow is **free (0 credits)** — credits apply to video. The API reads Flow's live `/v1/credits` balance (refreshed periodically) and exposes it via `GET /stats` (`creditsRemaining`, `creditsSpent`, `realCreditsPerImage`) and `GET /health` (`creditsRemaining`) — useful for monitoring/quota and future video support.
 
 ### Still not available (depend on Flow tools)
 - **Upscale / inpainting**: Flow has these tools but they need separate UI wiring — not implemented yet.
