@@ -16,16 +16,33 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const IMAGES_DIR = path.join(PROJECT_ROOT, 'outputs', 'images');
 
 let listenerAttached = false;
-const resultBuffer = []; // { name, prompt, fifeUrl, aspectRatio, ts }
+const resultBuffer = []; // { name, prompt, fifeUrl, aspectRatio, seed, ts }
+let creditsRemaining = null;
+let creditsInitial = null;
+
+// Latest real credit balance from Flow's /v1/credits endpoint.
+export function getCredits() {
+  return {
+    remaining: creditsRemaining,
+    initial: creditsInitial,
+    spent: (creditsInitial != null && creditsRemaining != null) ? (creditsInitial - creditsRemaining) : null,
+  };
+}
 
 // Attach a one-time response listener that records every generated image
-// together with the exact prompt it was generated from.
+// together with the exact prompt it was generated from, and the credit balance.
 export function attachResultListener(page) {
   if (listenerAttached) return;
   listenerAttached = true;
   page.on('response', async (resp) => {
     try {
-      if (!/flowMedia:batchGenerateImages/.test(resp.url())) return;
+      const url = resp.url();
+      if (/\/v1\/credits/.test(url)) {
+        const j = await resp.json().catch(() => null);
+        if (j && typeof j.credits === 'number') { creditsRemaining = j.credits; if (creditsInitial == null) creditsInitial = j.credits; }
+        return;
+      }
+      if (!/flowMedia:batchGenerateImages/.test(url)) return;
       const json = await resp.json().catch(() => null);
       if (!json || !Array.isArray(json.media)) return;
       for (const m of json.media) {
@@ -136,7 +153,7 @@ async function waitForComposer(page, ms = 30000) {
   return false;
 }
 
-export async function submitPrompt({ prompt, ratio, model, reference, count }) {
+export async function submitPrompt({ prompt, ratio, model, reference, count, seed }) {
   const page = getPage();
   const desiredCount = Math.min(Math.max(parseInt(count || 1, 10), 1), 4);
   await ensureProjectInContext(page, { campaign: 'api' });
@@ -204,6 +221,22 @@ export async function submitPrompt({ prompt, ratio, model, reference, count }) {
   if (await genBtn.isDisabled().catch(() => false)) {
     throw new FlowError(ErrorCodes.GENERATION_BUTTON_DISABLED, 'Generate button disabled');
   }
+
+  // #1 Seed injection: intercept the generation request and force our seed
+  // so the same seed reproduces the same character/style.
+  let seedRoute = null;
+  const seedNum = (seed !== undefined && seed !== null && seed !== '') ? parseInt(seed, 10) : null;
+  if (seedNum != null && !Number.isNaN(seedNum)) {
+    seedRoute = async (route) => {
+      try {
+        let b = route.request().postData() || '';
+        if (b && /"seed":/.test(b)) b = b.replace(/"seed":\s*-?\d+/g, `"seed":${seedNum}`);
+        await route.continue({ postData: b || undefined });
+      } catch { try { await route.continue(); } catch {} }
+    };
+    await page.route('**/flowMedia:batchGenerateImages', seedRoute).catch(() => {});
+  }
+
   await genBtn.click();
 
   // Handle a possible Agent "Accepter/Approve" confirmation + detect content rejection.
@@ -219,6 +252,10 @@ export async function submitPrompt({ prompt, ratio, model, reference, count }) {
     }
     await page.waitForTimeout(300);
   }
+
+  // Remove the seed route (request already sent).
+  if (seedRoute) { await page.unroute('**/flowMedia:batchGenerateImages', seedRoute).catch(() => {}); }
+
   return { ratio: r, count: desiredCount };
 }
 

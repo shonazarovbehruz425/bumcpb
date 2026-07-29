@@ -10,7 +10,7 @@ import { fileURLToPath } from 'url';
 import { get } from '../src/utils/config.js';
 import { launchChromeDirect, closeBrowser, getPage, isBrowserConnected } from '../src/browser/connect.js';
 import { navigateToFlow } from '../src/browser/launch-profile.js';
-import { attachResultListener, resetResultListener, submitPrompt, takeResultsForPrompt, downloadResult } from '../src/tools/flow-batch.js';
+import { attachResultListener, resetResultListener, submitPrompt, takeResultsForPrompt, downloadResult, getCredits } from '../src/tools/flow-batch.js';
 import { trashImages, emptyTrash } from '../src/tools/flow-cleanup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -177,6 +177,7 @@ function makeJob(body, host) {
     model: body.model || null,
     reference: body.reference || null,
     referenceId: body.referenceId || null,
+    requestedSeed: (body.seed !== undefined && body.seed !== null && body.seed !== '') ? parseInt(body.seed, 10) : null,
     count: Math.min(Math.max(parseInt(body.count || 1, 10), 1), 4),
     priority: parseInt(body.priority || 0, 10) || 0,
     callbackUrl: body.webhook || body.callbackUrl || null,
@@ -225,7 +226,7 @@ async function pump() {
           await ensureBrowser();
           job.status = 'processing'; job.stage = 'submitting'; job.startedAt = Date.now();
           const refInput = job.referenceId && refCache.get(job.referenceId) ? refCache.get(job.referenceId) : job.reference;
-          await submitPrompt({ prompt: job.prompt, ratio: job.ratio, model: job.model, reference: refInput, count: job.count });
+          await submitPrompt({ prompt: job.prompt, ratio: job.ratio, model: job.model, reference: refInput, count: job.count, seed: job.requestedSeed });
           job.stage = 'rendering'; job.submittedAt = Date.now();
           inFlight.set(id, job); saveJobs();
           console.log(`[api] Submitted ${id}: "${job.prompt}" x${job.count} (inFlight ${inFlight.size}, queued ${queue.length})`);
@@ -289,9 +290,19 @@ const server = http.createServer(async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
   const urlPath = (req.url || '/').split('?')[0];
 
-  if (req.method === 'GET' && urlPath === '/health') { const healthy = ready && await cdpHealthy(); return json(res, 200, { ok: true, chromeReady: ready, cdpHealthy: healthy, account: get('expectedAccount'), queue: { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY } }); }
+  if (req.method === 'GET' && urlPath === '/health') { const healthy = ready && await cdpHealthy(); return json(res, 200, { ok: true, chromeReady: ready, cdpHealthy: healthy, account: get('expectedAccount'), creditsRemaining: getCredits().remaining, queue: { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY } }); }
   if (req.method === 'GET' && urlPath === '/queue') return json(res, 200, { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY, total: jobs.size, maxQueue: MAX_QUEUE });
-  if (req.method === 'GET' && urlPath === '/stats') { const avg = stats.done ? Math.round(stats.totalMs / stats.done) : 0; const total = stats.done + stats.failed; return json(res, 200, { generated: stats.done, images: stats.images, failed: stats.failed, pending: queue.length, inFlight: inFlight.size, avgMs: avg, successRate: total ? +(stats.done / total).toFixed(3) : 1, creditsUsed: stats.images, cost: +(stats.images * COST_PER_IMAGE).toFixed(4) }); }
+  if (req.method === 'GET' && urlPath === '/stats') {
+    const avg = stats.done ? Math.round(stats.totalMs / stats.done) : 0; const total = stats.done + stats.failed;
+    const cr = getCredits();
+    const realPerImage = (cr.spent != null && stats.images > 0) ? +(cr.spent / stats.images).toFixed(3) : null;
+    return json(res, 200, {
+      generated: stats.done, images: stats.images, failed: stats.failed, pending: queue.length, inFlight: inFlight.size,
+      avgMs: avg, successRate: total ? +(stats.done / total).toFixed(3) : 1,
+      creditsRemaining: cr.remaining, creditsSpent: cr.spent, realCreditsPerImage: realPerImage,
+      cost: +(stats.images * COST_PER_IMAGE).toFixed(4),
+    });
+  }
   if (req.method === 'GET' && urlPath.startsWith('/outputs/')) return serveOutput(res, urlPath);
   if (req.method === 'GET' && urlPath.startsWith('/batch/')) { const bid = urlPath.slice('/batch/'.length); const list = [...jobs.values()].filter((j) => j.batchId === bid); if (!list.length) return json(res, 404, { error: 'not_found' }); const by = (s) => list.filter((j) => j.status === s).length; return json(res, 200, { batchId: bid, total: list.length, done: by('done'), failed: by('failed'), processing: by('processing'), queued: by('queued'), cancelled: by('cancelled'), jobs: list.map((j) => publicJob(j, host)) }); }
   if (req.method === 'GET' && urlPath.startsWith('/jobs/')) { const job = jobs.get(urlPath.slice('/jobs/'.length)); if (!job) return json(res, 404, { error: 'not_found' }); return json(res, 200, publicJob(job, host)); }

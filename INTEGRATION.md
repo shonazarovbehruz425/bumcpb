@@ -204,7 +204,9 @@ When set, each image is uploaded and `images[].url` becomes the public CDN URL (
 {
   "prompt": "a stickman running",
   "count": 3,                 // 1-4 images for this prompt (default 1)
+  "seed": 713014,             // fixed seed for reproducible/consistent output (optional)
   "ratio": "1:1",             // supported: 16:9,4:3,1:1,3:4,9:16 (aliases like 4:5→3:4 auto-mapped)
+  "width": 1920, "height": 1080,  // OR "size":"1920x1080" — exact pixels (needs sharp)
   "style": "stickman",        // named preset from config.stylePresets, appended to the prompt
   "reference": "https://...", // image-to-image (URL)
   "referenceId": "abc",       // reuse a pre-registered reference (see /references)
@@ -242,7 +244,14 @@ When set, each image is uploaded and `images[].url` becomes the public CDN URL (
 ### Config additions
 `maxQueue, costPerImage, stylePresets{name:promptSuffix}, webhookSecret, apiKeys[].dailyLimit`
 
-### Not yet available (depend on Flow features)
-- **Upscale / inpainting**: Flow tools exist but need separate UI wiring — not implemented yet.
-- **Setting an input seed**: Flow's composer doesn't expose a seed input, so seeds are **returned** (for reproduction/consistency tracking) but cannot be forced. Consistent characters are best achieved via a fixed **reference image** + `referenceId`.
-- **Exact pixel sizes (e.g. 1920×1080)**: Flow offers fixed aspect ratios only; pixel dimensions can't be set (aliases are mapped to the nearest ratio).
+### Seed (fixed / reproducible) ✅
+`"seed": 713014` forces the generation seed (injected into Flow's request) → the same seed + prompt reproduces the same character/style. The actual seed is returned in `seed` / `reproduction.seed`. Omit it for a random seed (still returned).
+
+### Exact pixel sizes ✅ (requires `sharp` on the server)
+`"width": 1920, "height": 1080` (or `"size": "1920x1080"`). Flow renders the nearest aspect ratio, then the server crops/resizes to the exact pixels (`fit: cover`). Install once: `npm i sharp`.
+
+### Real credits / cost ✅
+The API reads Flow's live `/v1/credits` balance. `GET /stats` returns `creditsRemaining`, `creditsSpent` (since start), and `realCreditsPerImage`. `GET /health` also returns `creditsRemaining`.
+
+### Still not available (depend on Flow tools)
+- **Upscale / inpainting**: Flow has these tools but they need separate UI wiring — not implemented yet.
