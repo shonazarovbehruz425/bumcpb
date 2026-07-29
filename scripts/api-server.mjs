@@ -17,6 +17,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const CONFIG_PATH = path.join(PROJECT_ROOT, 'config', 'flow.config.json');
 const JOBS_FILE = path.join(PROJECT_ROOT, 'outputs', 'jobs.json');
+const REFS_FILE = path.join(PROJECT_ROOT, 'outputs', 'refs.json');
 const AUDIT_FILE = path.join(PROJECT_ROOT, 'outputs', 'audit.log');
 const IMAGES_DIR = path.join(PROJECT_ROOT, 'outputs', 'images');
 const REF_DIR = path.join(PROJECT_ROOT, 'outputs', 'refs');
@@ -73,6 +74,21 @@ function loadJobs() {
   } catch {}
 }
 function saveJobs() { try { fs.mkdirSync(path.dirname(JOBS_FILE), { recursive: true }); fs.writeFileSync(JOBS_FILE, JSON.stringify([...jobs.values()], null, 2)); } catch {} }
+
+// Persist the reference library (referenceId -> local file) so registered
+// characters/ingredients survive an API restart (Characters panel durability).
+function saveRefs() {
+  try {
+    const obj = {}; for (const [id, p] of refCache) obj[id] = path.relative(PROJECT_ROOT, p);
+    fs.mkdirSync(path.dirname(REFS_FILE), { recursive: true }); fs.writeFileSync(REFS_FILE, JSON.stringify(obj, null, 2));
+  } catch {}
+}
+function loadRefs() {
+  try {
+    const obj = JSON.parse(fs.readFileSync(REFS_FILE, 'utf-8'));
+    for (const [id, rel] of Object.entries(obj)) { const abs = path.isAbsolute(rel) ? rel : path.join(PROJECT_ROOT, rel); if (fs.existsSync(abs)) refCache.set(id, abs); }
+  } catch {}
+}
 
 function audit(entry) {
   if (!AUDIT_ENABLED) return;
@@ -339,7 +355,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && urlPath === '/references') {
     let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, 400, { error: 'invalid_json' }); }
     if (!body.url) return json(res, 400, { error: 'missing_url' });
-    try { const resp = await fetch(body.url); if (!resp.ok) return json(res, 400, { error: 'fetch_failed' }); const buf = Buffer.from(await resp.arrayBuffer()); fs.mkdirSync(REF_DIR, { recursive: true }); const id = crypto.randomUUID(); const ext = (resp.headers.get('content-type') || '').includes('png') ? '.png' : '.jpg'; const p = path.join(REF_DIR, id + ext); fs.writeFileSync(p, buf); refCache.set(id, p); return json(res, 201, { referenceId: id }); } catch (e) { return json(res, 500, { error: 'reference_failed', message: e.message }); }
+    try { const resp = await fetch(body.url); if (!resp.ok) return json(res, 400, { error: 'fetch_failed' }); const buf = Buffer.from(await resp.arrayBuffer()); fs.mkdirSync(REF_DIR, { recursive: true }); const id = crypto.randomUUID(); const ext = (resp.headers.get('content-type') || '').includes('png') ? '.png' : '.jpg'; const p = path.join(REF_DIR, id + ext); fs.writeFileSync(p, buf); refCache.set(id, p); saveRefs(); return json(res, 201, { referenceId: id }); } catch (e) { return json(res, 500, { error: 'reference_failed', message: e.message }); }
   }
   // Batch cancel
   if (req.method === 'DELETE' && urlPath.startsWith('/batch/')) {
@@ -389,6 +405,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 loadJobs();
+loadRefs();
 server.listen(PORT, () => {
   console.log(`[api] Listening on http://0.0.0.0:${PORT}`);
   console.log(`[api] Keys: ${KEY_INFO.size} | Concurrency: ${CONCURRENCY} | Cleanup: ${ENABLE_CLEANUP} | S3: ${!!(S3CFG && S3CFG.bucket)} | Webhook-HMAC: ${!!WEBHOOK_SECRET}`);

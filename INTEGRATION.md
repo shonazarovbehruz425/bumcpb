@@ -174,6 +174,8 @@ GET /health  → { ok, chromeReady, cdpHealthy, account, queue }
 
 ### Reference image (image-to-image) ✅
 Add `"reference": "https://.../img.jpg"` (or an array of up to 3 URLs) to a `/generate` or `/batch` request. The API downloads the reference(s), uploads them into Flow, and generates using them as ingredients:
+
+> **Reusable references (character library):** register a URL once via `POST /references` → `{ referenceId }`, then pass `"referenceId": "<id>"` on every frame. The id→file mapping is stored in `outputs/refs.json` and **survives API/pm2 restarts**, so a character library stays valid after redeploys.
 ```json
 { "prompt": "transform into a watercolor painting", "reference": "https://example.com/photo.jpg" }
 ```
@@ -226,7 +228,7 @@ When set, each image is uploaded and `images[].url` becomes the public CDN URL (
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/jobs/status` | Bulk status: `{ "ids": [...] }` → statuses of many jobs in ONE call |
-| POST | `/references` | `{ "url": "..." }` → `{ referenceId }` (upload once, reuse many times) |
+| POST | `/references` | `{ "url": "..." }` → `{ referenceId }` (upload once, reuse many times; **persisted across restarts**) |
 | DELETE | `/batch/{batchId}` | Cancel all still-queued jobs in a batch |
 | DELETE | `/jobs/{id}` | Cancel one queued job |
 | POST | `/jobs/{id}/retry` | Retry a failed/cancelled job |
