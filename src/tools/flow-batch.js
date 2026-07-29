@@ -69,9 +69,16 @@ async function waitForComposer(page, ms = 30000) {
   return false;
 }
 
-export async function submitPrompt({ prompt, ratio, model }) {
+export async function submitPrompt({ prompt, ratio, model, reference }) {
   const page = getPage();
   await ensureProjectInContext(page, { campaign: 'api' });
+
+  // Reference image (image-to-image): accepted and logged. Attaching a reference
+  // into the Flow composer requires a file-upload UI step (planned). For now the
+  // prompt is generated as text-to-image; the reference is recorded on the job.
+  if (reference) {
+    logger.info('Reference image provided (text-to-image used for now)', { reference: String(reference).slice(0, 80) });
+  }
 
   // Wait for the composer to load; if missing, reload the project once and wait again.
   let composerReady = await waitForComposer(page, 30000);

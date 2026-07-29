@@ -131,3 +131,62 @@ pm2 status                 # is flow-api online
 pm2 logs flow-api          # logs / progress
 pm2 restart flow-api       # after: git pull
 ```
+
+
+---
+
+## Advanced features
+
+### Auth — multiple API keys
+Config `config/flow.config.json`:
+```json
+{ "apiKey": "<default-key>", "apiKeys": [ { "key": "abc123", "name": "client-a" }, "plainkey2" ] }
+```
+Any listed key is accepted in `x-api-key`. Revoke a client by removing its entry + restart.
+
+### Webhooks (no polling needed)
+Add `"webhook": "https://your-app/callback"` to a `/generate` or `/batch` request (or set global `defaultWebhookUrl` in config). When a job finishes (`done`/`failed`), the API POSTs the full job JSON (with image URLs) to that URL.
+
+### Priority queue
+Add `"priority": 10` (higher = sooner). Default 0.
+
+### Cancel a queued job
+```
+DELETE /jobs/{id}     (header x-api-key)   → { status: "cancelled" }   (only while "queued")
+```
+
+### Retry a failed/cancelled job
+```
+POST /jobs/{id}/retry (header x-api-key)   → { status: "queued" }
+```
+
+### Batch progress
+```
+GET /batch/{batchId}  → { total, done, failed, processing, queued, jobs: [...] }
+```
+`batchId` is returned by `POST /batch`.
+
+### Stats & health
+```
+GET /stats   → { generated, failed, pending, inFlight, avgMs, successRate, creditsUsed }
+GET /health  → { ok, chromeReady, cdpHealthy, account, queue }
+```
+
+### Reference image (image-to-image) — experimental
+`"reference": "https://.../img.jpg"` is accepted and recorded on the job. Attaching it into the Flow composer (file upload) is not yet wired, so generation currently runs text-to-image. Planned.
+
+### Optional cloud storage (S3 / Cloudflare R2)
+Requires `npm i @aws-sdk/client-s3` on the server + config:
+```json
+{ "s3": { "endpoint": "https://<r2>.r2.cloudflarestorage.com", "region": "auto", "bucket": "flow", "accessKeyId": "...", "secretAccessKey": "...", "publicBaseUrl": "https://cdn.example.com" } }
+```
+When set, each image is uploaded and `images[].url` becomes the public CDN URL (falls back to local serving if upload fails).
+
+### Housekeeping (automatic)
+- **Audit log**: every request appended to `outputs/audit.log` (async, non-blocking). Disable with `"auditLog": false`.
+- **Retention**: images + finished jobs older than `retentionDays` (default 7) are auto-deleted hourly.
+- **Session alerts**: if Google logs out / needs verification, the API POSTs to `alertWebhookUrl` (if set) and logs it.
+- **Self-maintenance**: Chrome recycled by memory/generation count, orphan temp profiles cleaned, idle CDP health checked.
+
+### Config keys summary
+`apiPort, apiKey, apiKeys[], concurrency, jobTimeoutMs, cdpPort, recycleEveryGenerations, minAvailableMemMB, clearEveryGenerations, enableTrashCleanup, auditLog, retentionDays, alertWebhookUrl, defaultWebhookUrl, s3{}`
