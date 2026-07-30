@@ -368,9 +368,12 @@ const server = http.createServer(async (req, res) => {
   const urlPath = (req.url || '/').split('?')[0];
 
   const rawHost = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
-  const effectiveHost = (rawHost.includes('localhost') || rawHost.includes('127.0.0.1')) ? (ip && !ip.includes('127.0.0.1') && !ip.includes('::1') ? `${ip}:${PORT}` : rawHost) : rawHost;
-  const publicUrl = `http://${effectiveHost}`;
-  const serverIp = effectiveHost.split(':')[0];
+  let hostIp = rawHost.split(':')[0];
+  if (hostIp === 'localhost' || hostIp === '127.0.0.1' || hostIp === '::1') {
+    hostIp = '3.90.189.246';
+  }
+  const publicUrl = `http://${hostIp}:${PORT}`;
+  const serverIp = hostIp;
 
   if (req.method === 'GET' && urlPath === '/health') {
     const healthy = ready && await cdpHealthy();
