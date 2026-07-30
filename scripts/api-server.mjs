@@ -234,6 +234,45 @@ function publicJob(job, host) {
   };
 }
 
+// Calculate dynamic concurrency based on free memory and CPU load
+function dynamicConcurrency() {
+  const memMB = availableMemMB();
+  const load = (os.loadavg && os.loadavg()[0]) || 0;
+  if (memMB < 300 || load > 6.0) return 1;
+  if (memMB > 1200 && load < 2.5) return Math.min(CONCURRENCY + 1, 5);
+  return CONCURRENCY;
+}
+
+// Self-Healing helper: reset and re-launch Chrome if un-healthy or stuck
+async function selfHealBrowser(reason) {
+  console.warn(`[api] Self-healing triggered: ${reason}`);
+  try { await resetBrowser(); } catch {}
+  try {
+    await ensureBrowser();
+    console.log('[api] Self-healing completed: Chrome re-launched cleanly.');
+    return true;
+  } catch (e) {
+    console.error('[api] Self-healing failed:', e.message);
+    alertAdmin(`Self-healing failed: ${e.message}`);
+    return false;
+  }
+}
+
+// Smart Cache: find previously completed identical job
+function findSmartCache(job) {
+  const p = (job.prompt || '').trim();
+  if (!p) return null;
+  for (const ex of jobs.values()) {
+    if (ex.status === 'done' && (ex.images || []).length >= job.count && ex.prompt === p) {
+      if (ex.ratio === job.ratio && ex.model === job.model && ex.width === job.width && ex.height === job.height) {
+        const valid = ex.images.every((im) => im.s3Url || (im.file && fs.existsSync(path.join(PROJECT_ROOT, im.file))));
+        if (valid) return ex;
+      }
+    }
+  }
+  return null;
+}
+
 // ---------- Queue ----------
 function enqueue(job) {
   jobs.set(job.id, job);
@@ -251,7 +290,8 @@ async function pump() {
         if (ENABLE_CLEANUP && ready && genCount - lastClearGen >= CLEAR_EVERY) { try { const r = await trashImages(); console.log('[api] Moved images to trash', r); } catch {} lastClearGen = genCount; }
         if (shouldRecycleChrome()) { console.log(`[api] Recycling Chrome (gen ${genCount}, availMB ${availableMemMB()})`); await resetBrowser(); lastRecycleGen = genCount; }
       }
-      while (inFlight.size < CONCURRENCY && queue.length > 0) {
+      const activeLimit = dynamicConcurrency();
+      while (inFlight.size < activeLimit && queue.length > 0) {
         const id = queue.shift(); const job = jobs.get(id);
         if (!job || job.status === 'cancelled') continue;
         try {
@@ -264,14 +304,16 @@ async function pump() {
           ]);
           job.stage = 'rendering'; job.submittedAt = Date.now();
           inFlight.set(id, job); saveJobs();
-          console.log(`[api] Submitted ${id}: "${job.prompt}" x${job.count} (inFlight ${inFlight.size}, queued ${queue.length})`);
+          console.log(`[api] Submitted ${id}: "${job.prompt}" x${job.count} (inFlight ${inFlight.size}, queued ${queue.length}, limit ${activeLimit})`);
         } catch (e) {
           job.status = 'failed'; job.finishedAt = Date.now();
           job.error = e.message; job.code = /content_rejected/i.test(e.message) ? 'content_rejected' : 'error';
           stats.failed++; saveJobs(); fireWebhook(job);
           console.error(`[api] Submit failed ${id}: ${e.message}`);
-          // Reset the browser on hang/disconnect so the next job starts clean.
-          if (/submit_timeout/.test(e.message) || !isBrowserConnected()) await resetBrowser();
+          // Self-healing: Reset and re-launch Chrome on hang/disconnect
+          if (/submit_timeout/.test(e.message) || !isBrowserConnected()) {
+            await selfHealBrowser(`Submit failed for ${id}: ${e.message}`);
+          }
         }
         await sleep(1500);
       }
@@ -338,6 +380,25 @@ const server = http.createServer(async (req, res) => {
       cost: +(stats.images * COST_PER_IMAGE).toFixed(4),
     });
   }
+  if (req.method === 'GET' && urlPath === '/billing') {
+    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+    const info = keyInfo(req);
+    const key = req.headers['x-api-key'];
+    const today = new Date().toISOString().slice(0, 10);
+    const u = keyUsage.get(key) || { day: today, count: 0 };
+    if (u.day !== today) { u.day = today; u.count = 0; }
+    let totalImages = 0;
+    for (const j of jobs.values()) if (j.status === 'done') totalImages += (j.images || []).length;
+    return json(res, 200, {
+      keyName: info?.name || 'client',
+      dailyLimit: info?.dailyLimit || 0,
+      todayUsed: u.count,
+      remainingQuota: info?.dailyLimit ? Math.max(0, info.dailyLimit - u.count) : 'unlimited',
+      totalImages,
+      costPerImage: COST_PER_IMAGE,
+      totalCost: +(totalImages * COST_PER_IMAGE).toFixed(4),
+    });
+  }
   if (req.method === 'GET' && urlPath.startsWith('/outputs/')) return serveOutput(res, urlPath);
   if (req.method === 'GET' && urlPath.startsWith('/batch/')) { const bid = urlPath.slice('/batch/'.length); const list = [...jobs.values()].filter((j) => j.batchId === bid); if (!list.length) return json(res, 404, { error: 'not_found' }); const by = (s) => list.filter((j) => j.status === s).length; return json(res, 200, { batchId: bid, total: list.length, done: by('done'), failed: by('failed'), processing: by('processing'), queued: by('queued'), cancelled: by('cancelled'), jobs: list.map((j) => publicJob(j, host)) }); }
   if (req.method === 'GET' && urlPath.startsWith('/jobs/')) { const job = jobs.get(urlPath.slice('/jobs/'.length)); if (!job) return json(res, 404, { error: 'not_found' }); return json(res, 200, publicJob(job, host)); }
@@ -384,7 +445,16 @@ const server = http.createServer(async (req, res) => {
     if (urlPath === '/generate') {
       if (!body.prompt || !body.prompt.trim()) return json(res, 400, { error: 'missing_prompt' });
       if (body.idempotencyKey && idemMap.has(body.idempotencyKey)) { const ex = jobs.get(idemMap.get(body.idempotencyKey)); if (ex) return json(res, 200, { jobId: ex.id, status: ex.status, idempotent: true }); }
-      const job = makeJob(body, host); enqueue(job);
+      const job = makeJob(body, host);
+      const cacheHit = findSmartCache(job);
+      if (cacheHit) {
+        job.status = 'done'; job.stage = 'done'; job.images = JSON.parse(JSON.stringify(cacheHit.images));
+        job.seed = cacheHit.seed; job.finishedAt = Date.now();
+        jobs.set(job.id, job); if (job.idempotencyKey) idemMap.set(job.idempotencyKey, job.id);
+        saveJobs(); audit({ action: 'generate_cache_hit', key: keyInfo(req)?.name, ip, jobId: job.id, prompt: job.prompt });
+        return json(res, 200, { jobId: job.id, status: 'done', stage: 'done', cached: true, externalId: job.externalId, ...publicJob(job, host) });
+      }
+      enqueue(job);
       audit({ action: 'generate', key: keyInfo(req)?.name, ip, jobId: job.id, prompt: job.prompt });
       return json(res, 202, { jobId: job.id, status: 'queued', externalId: job.externalId });
     }
@@ -395,7 +465,16 @@ const server = http.createServer(async (req, res) => {
       const io = typeof it === 'object' ? it : { prompt: it };
       const prompt = (io.prompt || '').trim(); if (!prompt) continue;
       if (io.idempotencyKey && idemMap.has(io.idempotencyKey)) { created.push({ jobId: idemMap.get(io.idempotencyKey), idempotent: true }); continue; }
-      const job = makeJob({ ...body, ...io, prompt, batchId }, host); enqueue(job); created.push({ jobId: job.id, externalId: job.externalId });
+      const job = makeJob({ ...body, ...io, prompt, batchId }, host);
+      const cacheHit = findSmartCache(job);
+      if (cacheHit) {
+        job.status = 'done'; job.stage = 'done'; job.images = JSON.parse(JSON.stringify(cacheHit.images));
+        job.seed = cacheHit.seed; job.finishedAt = Date.now();
+        jobs.set(job.id, job); if (job.idempotencyKey) idemMap.set(job.idempotencyKey, job.id);
+        saveJobs(); created.push({ jobId: job.id, status: 'done', cached: true, externalId: job.externalId });
+        continue;
+      }
+      enqueue(job); created.push({ jobId: job.id, externalId: job.externalId });
     }
     audit({ action: 'batch', key: keyInfo(req)?.name, ip, batchId, count: created.length });
     return json(res, 202, { batchId, jobs: created, jobIds: created.map((c) => c.jobId), count: created.length, pending: queue.length });
