@@ -367,13 +367,17 @@ const server = http.createServer(async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
   const urlPath = (req.url || '/').split('?')[0];
 
+  const rawHost = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
+  const effectiveHost = (rawHost.includes('localhost') || rawHost.includes('127.0.0.1')) ? (ip && !ip.includes('127.0.0.1') && !ip.includes('::1') ? `${ip}:${PORT}` : rawHost) : rawHost;
+  const publicUrl = `http://${effectiveHost}`;
+  const serverIp = effectiveHost.split(':')[0];
+
   if (req.method === 'GET' && urlPath === '/health') {
     const healthy = ready && await cdpHealthy();
-    const serverIp = host.split(':')[0];
     return json(res, 200, {
       ok: true,
       serverIp,
-      publicUrl: `http://${host}`,
+      publicUrl,
       chromeReady: ready,
       cdpHealthy: healthy,
       account: get('expectedAccount'),
@@ -382,10 +386,9 @@ const server = http.createServer(async (req, res) => {
     });
   }
   if (req.method === 'GET' && urlPath === '/ip') {
-    const serverIp = host.split(':')[0];
     return json(res, 200, {
       ip: serverIp,
-      url: `http://${host}`
+      url: publicUrl
     });
   }
   if (req.method === 'GET' && urlPath === '/queue') return json(res, 200, { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY, total: jobs.size, maxQueue: MAX_QUEUE });
