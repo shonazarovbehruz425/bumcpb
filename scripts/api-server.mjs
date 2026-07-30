@@ -509,6 +509,30 @@ const server = http.createServer(async (req, res) => {
   return json(res, 404, { error: 'not_found' });
 });
 
+// Auto-Cleanup Cron (Disk Shield): Clean files older than 24 hours to protect disk space
+function runDiskShield() {
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  let removed = 0;
+  const dirs = [IMAGES_DIR, REF_DIR, os.tmpdir()];
+  for (const d of dirs) {
+    try {
+      if (!fs.existsSync(d)) continue;
+      for (const f of fs.readdirSync(d)) {
+        if (f.startsWith('flow_') || f.startsWith('flow-ref-') || f.startsWith('chrome-kiara-cdp-')) {
+          const fp = path.join(d, f);
+          try {
+            if (fs.statSync(fp).mtimeMs < cutoff) {
+              fs.rmSync(fp, { recursive: true, force: true });
+              removed++;
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+  if (removed > 0) console.log(`[api] Disk Shield: Cleaned ${removed} old temp/image files.`);
+}
+
 loadJobs();
 loadRefs();
 server.listen(PORT, () => {
@@ -518,11 +542,24 @@ server.listen(PORT, () => {
   if (queue.length) setImmediate(pump);
 });
 
+// Periodic background maintenance: Session Heartbeat, Disk Shield & Pre-warmed Pool
 setInterval(async () => {
   cleanTempProfiles();
-  if (Date.now() - lastRetention > 3600000) { lastRetention = Date.now(); runRetention(); }
+  if (Date.now() - lastRetention > 3600000) { lastRetention = Date.now(); runRetention(); runDiskShield(); }
   if (!pumpRunning && inFlight.size === 0 && ready) {
     if (!(await cdpHealthy())) { console.log('[api] CDP unresponsive while idle — resetting Chrome.'); await resetBrowser(); alertAdmin('CDP was unresponsive; Chrome reset.'); }
-    else { await refreshCredits(); }
+    else {
+      try {
+        const page = getPage();
+        await page.evaluate(() => document.title);
+        await refreshCredits();
+      } catch (e) {
+        console.warn('[api] Session heartbeat ping failed, self-healing...');
+        await selfHealBrowser('Session heartbeat ping failed');
+      }
+    }
+  } else if (!ready && !ensuring) {
+    // Pre-warmed pool background auto-recovery
+    ensureBrowser().catch(() => {});
   }
 }, 60000);
