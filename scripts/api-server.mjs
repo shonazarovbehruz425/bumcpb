@@ -367,7 +367,27 @@ const server = http.createServer(async (req, res) => {
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
   const urlPath = (req.url || '/').split('?')[0];
 
-  if (req.method === 'GET' && urlPath === '/health') { const healthy = ready && await cdpHealthy(); return json(res, 200, { ok: true, chromeReady: ready, cdpHealthy: healthy, account: get('expectedAccount'), creditsRemaining: getCredits().remaining, queue: { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY } }); }
+  if (req.method === 'GET' && urlPath === '/health') {
+    const healthy = ready && await cdpHealthy();
+    const serverIp = host.split(':')[0];
+    return json(res, 200, {
+      ok: true,
+      serverIp,
+      publicUrl: `http://${host}`,
+      chromeReady: ready,
+      cdpHealthy: healthy,
+      account: get('expectedAccount'),
+      creditsRemaining: getCredits().remaining,
+      queue: { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY }
+    });
+  }
+  if (req.method === 'GET' && urlPath === '/ip') {
+    const serverIp = host.split(':')[0];
+    return json(res, 200, {
+      ip: serverIp,
+      url: `http://${host}`
+    });
+  }
   if (req.method === 'GET' && urlPath === '/queue') return json(res, 200, { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY, total: jobs.size, maxQueue: MAX_QUEUE });
   if (req.method === 'GET' && urlPath === '/stats') {
     const avg = stats.done ? Math.round(stats.totalMs / stats.done) : 0; const total = stats.done + stats.failed;
