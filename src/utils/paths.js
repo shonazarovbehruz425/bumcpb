@@ -25,8 +25,6 @@ export function windowsChromeCandidates() {
   ];
 }
 
-import { chromium } from 'playwright';
-
 /**
  * Standard Linux Chrome/Chromium install locations, in priority order.
  */
