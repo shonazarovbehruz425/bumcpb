@@ -207,6 +207,15 @@ export async function closeBrowser() {
 }
 
 export function getPage() {
+  if (context) {
+    try {
+      const pages = context.pages();
+      for (const p of pages) {
+        if (p.url().includes('labs.google')) return p;
+      }
+      if (pages.length > 0) return pages[pages.length - 1];
+    } catch {}
+  }
   if (!page) {
     throw new FlowError(ErrorCodes.BROWSER_NOT_CONNECTED, 'Browser not connected. Call connectToBrowser() first.');
   }
