@@ -261,12 +261,15 @@ function makeJob(body, host) {
   // If exact pixels requested without an explicit ratio, pick the nearest Flow ratio.
   let ratio = normalizeRatio(body.ratio);
   if (!ratio && width && height) ratio = nearestRatio(width / height);
+  const assignedAcc = getActiveAccount();
+  rotateAccount();
   return {
     width, height,
     id: crypto.randomUUID(),
     batchId: body.batchId || null,
     externalId: body.externalId || body.clientRef || null,
     idempotencyKey: body.idempotencyKey || null,
+    account: assignedAcc.account,
     prompt: applyStyle(rawPrompt, style),
     originalPrompt: rawPrompt,
     style,
@@ -288,6 +291,7 @@ function publicJob(job, host) {
   const h = host || job.host || `localhost:${PORT}`;
   return {
     id: job.id, batchId: job.batchId, externalId: job.externalId,
+    account: job.account || getActiveAccount().account,
     prompt: job.originalPrompt || job.prompt, style: job.style,
     status: job.status, stage: job.stage, code: job.code || undefined,
     model: job.model, ratio: job.ratio, aspectRatio: job.aspectRatio, seed: job.seed,
@@ -489,11 +493,21 @@ const server = http.createServer(async (req, res) => {
     const avg = stats.done ? Math.round(stats.totalMs / stats.done) : 0; const total = stats.done + stats.failed;
     const cr = getCredits();
     const realPerImage = (cr.spent != null && stats.images > 0) ? +(cr.spent / stats.images).toFixed(3) : null;
+    const accountStats = getAccountsList().map((acc) => {
+      let count = 0; let imgs = 0;
+      for (const j of jobs.values()) {
+        if (j.status === 'done' && (j.account === acc.account || (!j.account && acc.account === getActiveAccount().account))) {
+          count++; imgs += (j.images || []).length;
+        }
+      }
+      return { account: acc.account, jobsDone: count, totalImages: imgs };
+    });
     return json(res, 200, {
       generated: stats.done, images: stats.images, failed: stats.failed, pending: queue.length, inFlight: inFlight.size,
       avgMs: avg, successRate: total ? +(stats.done / total).toFixed(3) : 1,
       creditsRemaining: cr.remaining, creditsSpent: cr.spent, realCreditsPerImage: realPerImage,
       cost: +(stats.images * COST_PER_IMAGE).toFixed(4),
+      accountStats
     });
   }
   if (req.method === 'GET' && urlPath === '/billing') {
