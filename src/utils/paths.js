@@ -1,6 +1,7 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import { chromium } from 'playwright';
 import { FlowError, ErrorCodes } from './errors.js';
 
 /**
@@ -24,11 +25,14 @@ export function windowsChromeCandidates() {
   ];
 }
 
+import { chromium } from 'playwright';
+
 /**
  * Standard Linux Chrome/Chromium install locations, in priority order.
  */
 export function linuxChromeCandidates() {
-  return [
+  const home = getHomeDir();
+  const candidates = [
     '/usr/bin/google-chrome',
     '/usr/bin/google-chrome-stable',
     '/opt/google/chrome/chrome',
@@ -36,6 +40,22 @@ export function linuxChromeCandidates() {
     '/usr/bin/chromium',
     '/snap/bin/chromium',
   ];
+  try {
+    const pwPath = chromium.executablePath();
+    if (pwPath) candidates.unshift(pwPath);
+  } catch {}
+  try {
+    const pwCache = path.join(home, '.cache', 'ms-playwright');
+    if (fs.existsSync(pwCache)) {
+      for (const item of fs.readdirSync(pwCache)) {
+        if (item.startsWith('chromium')) {
+          const bin = path.join(pwCache, item, 'chrome-linux', 'chrome');
+          if (fs.existsSync(bin)) candidates.unshift(bin);
+        }
+      }
+    }
+  } catch {}
+  return candidates;
 }
 
 /**
