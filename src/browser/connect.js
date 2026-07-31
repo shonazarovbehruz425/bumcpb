@@ -98,7 +98,6 @@ async function launchNewBrowser(cdpPort, options = {}) {
  */
 export async function launchChromeDirect(options = {}) {
   const chromePath = resolveChromePath(options.chromePath || get('chromePath'));
-  const cdpPort = options.cdpPort || get('cdpPort', 9222);
   const headless = options.headless ?? get('headless', false);
   const userDir = options.profileSource || get('chromeUserDataDir') || '/home/beka/.config/google-chrome';
 
@@ -111,25 +110,6 @@ export async function launchChromeDirect(options = {}) {
     throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, `Chrome not found at ${chromePath}`);
   }
 
-  // FIRST: Try to connect to existing Chrome running on CDP
-  try {
-    logger.info('Attempting to connect to existing Chrome on CDP', { cdpPort });
-    let wsUrl = `http://127.0.0.1:${cdpPort}`;
-    try {
-      const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`);
-      if (r.ok) { const d = await r.json(); if (d.webSocketDebuggerUrl) wsUrl = d.webSocketDebuggerUrl; }
-    } catch {}
-    browser = await chromium.connectOverCDP(wsUrl, { acceptDownloads: false });
-    context = browser.contexts()[0];
-    const pages = context.pages();
-    page = pages.find(p => p.url().includes('labs.google')) || pages[0] || await context.newPage();
-    isConnected = true;
-    logger.info('Connected to existing Chrome successfully', { url: page.url() });
-    return { browser, context, page };
-  } catch (e) {
-    logger.info('CDP connection failed or incompatible, spawning Chrome process directly', { error: e.message });
-  }
-
   // Auto-clean any stale Singleton locks to prevent "Failed to create ProcessSingleton" aborts
   try {
     for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
@@ -139,49 +119,31 @@ export async function launchChromeDirect(options = {}) {
   } catch {}
 
   const args = [
-    `--remote-debugging-port=${cdpPort}`,
-    `--user-data-dir=${userDir}`,
     '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
     '--window-size=1920,1080',
   ];
-  if (headless) args.push('--headless=new');
   if (process.platform === 'linux') {
     args.push('--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu');
   }
 
-  logger.info('Launching Chrome directly with user profile', { chromePath, userDir, cdpPort, headless });
+  logger.info('Launching Chrome persistent context directly', { chromePath, userDir, headless });
 
-  const env = { ...process.env, DISPLAY: process.env.DISPLAY || ':1' };
-  const chromeProcess = spawn(chromePath, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+  context = await chromium.launchPersistentContext(userDir, {
+    executablePath: chromePath,
+    headless,
+    args,
+    viewport: { width: 1920, height: 1080 },
+    env: { ...process.env, DISPLAY: process.env.DISPLAY || ':1' }
+  });
 
-  const cdpUrl = `http://127.0.0.1:${cdpPort}`;
-  let attempts = 0;
-  while (attempts < 20) {
-    try {
-      const resp = await fetch(`${cdpUrl}/json/version`);
-      if (resp.ok) break;
-    } catch { }
-    await new Promise(r => setTimeout(r, 1000));
-    attempts++;
-  }
-  if (attempts >= 20) {
-    throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, 'Chrome CDP failed to start in time');
-  }
-
-  let wsUrl = `http://127.0.0.1:${cdpPort}`;
-  try {
-    const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`);
-    if (r.ok) { const d = await r.json(); if (d.webSocketDebuggerUrl) wsUrl = d.webSocketDebuggerUrl; }
-  } catch {}
-
-  browser = await chromium.connectOverCDP(wsUrl, { acceptDownloads: false });
-  context = browser.contexts()[0];
-  page = context.pages()[0] || await context.newPage();
+  browser = context.browser() || null;
+  const pages = context.pages();
+  page = pages.find(p => p.url().includes('labs.google')) || pages[0] || await context.newPage();
   isConnected = true;
 
-  logger.info('Chrome direct + CDP connected', { webdriver: await page.evaluate(() => navigator.webdriver) });
+  logger.info('Chrome persistent context launched successfully', { url: page.url() });
   return { browser, context, page };
 }
 
