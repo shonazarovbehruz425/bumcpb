@@ -362,6 +362,15 @@ function checkQuota(req) {
   u.count++; keyUsage.set(key, u); return true;
 }
 
+let publicIpCached = null;
+async function fetchPublicIp() {
+  try {
+    const r = await fetch('https://ifconfig.me/ip');
+    if (r.ok) publicIpCached = (await r.text()).trim();
+  } catch {}
+}
+fetchPublicIp();
+
 const server = http.createServer(async (req, res) => {
   const host = req.headers.host || `localhost:${PORT}`;
   const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString();
@@ -370,7 +379,7 @@ const server = http.createServer(async (req, res) => {
   const rawHost = req.headers['x-forwarded-host'] || req.headers.host || `localhost:${PORT}`;
   let hostIp = rawHost.split(':')[0];
   if (hostIp === 'localhost' || hostIp === '127.0.0.1' || hostIp === '::1') {
-    hostIp = '3.90.189.246';
+    hostIp = publicIpCached || hostIp;
   }
   const publicUrl = `http://${hostIp}:${PORT}`;
   const serverIp = hostIp;
