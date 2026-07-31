@@ -114,7 +114,12 @@ export async function launchChromeDirect(options = {}) {
   // FIRST: Try to connect to existing Chrome running on CDP
   try {
     logger.info('Attempting to connect to existing Chrome on CDP', { cdpPort });
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    let wsUrl = `http://127.0.0.1:${cdpPort}`;
+    try {
+      const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`);
+      if (r.ok) { const d = await r.json(); if (d.webSocketDebuggerUrl) wsUrl = d.webSocketDebuggerUrl; }
+    } catch {}
+    browser = await chromium.connectOverCDP(wsUrl);
     context = browser.contexts()[0];
     const pages = context.pages();
     page = pages.find(p => p.url().includes('labs.google')) || pages[0] || await context.newPage();
@@ -122,7 +127,7 @@ export async function launchChromeDirect(options = {}) {
     logger.info('Connected to existing Chrome successfully', { url: page.url() });
     return { browser, context, page };
   } catch (e) {
-    logger.info('No existing Chrome found, will launch persistent profile directly', { error: e.message });
+    logger.info('CDP connection failed or incompatible, spawning Chrome process directly', { error: e.message });
   }
 
   // Auto-clean any stale Singleton locks to prevent "Failed to create ProcessSingleton" aborts
@@ -165,7 +170,13 @@ export async function launchChromeDirect(options = {}) {
     throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, 'Chrome CDP failed to start in time');
   }
 
-  browser = await chromium.connectOverCDP(cdpUrl);
+  let wsUrl = `http://127.0.0.1:${cdpPort}`;
+  try {
+    const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`);
+    if (r.ok) { const d = await r.json(); if (d.webSocketDebuggerUrl) wsUrl = d.webSocketDebuggerUrl; }
+  } catch {}
+
+  browser = await chromium.connectOverCDP(wsUrl);
   context = browser.contexts()[0];
   page = context.pages()[0] || await context.newPage();
   isConnected = true;
