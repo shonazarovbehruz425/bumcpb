@@ -14,17 +14,16 @@ async function runTest() {
   console.log('Resolved Chrome binary path:', chromeBin);
   const cdpPort = 9222;
 
-  console.log('Launching Chrome directly via spawn with anti-detection flags...');
+  console.log('Launching Chrome directly via spawn with DISPLAY=:1 and anti-detection flags...');
   const child = spawn(chromeBin, [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
-    '--headless=new',
     '--no-sandbox',
     '--disable-setuid-sandbox'
-  ], { detached: true, stdio: 'ignore' });
+  ], { detached: true, stdio: 'ignore', env: { ...process.env, DISPLAY: process.env.DISPLAY || ':1' } });
   child.unref();
 
   await new Promise(r => setTimeout(r, 4000));

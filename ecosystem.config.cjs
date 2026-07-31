@@ -16,6 +16,9 @@ module.exports = {
       error_file: './outputs/pm2-error.log',
       merge_logs: true,
       time: true,
+      env: {
+        DISPLAY: ':1',
+      },
     },
   ],
 };
