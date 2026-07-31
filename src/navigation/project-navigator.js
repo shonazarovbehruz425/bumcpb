@@ -252,9 +252,14 @@ export async function createNewProject(page, name, campaign) {
 export async function ensureProjectInContext(page, context = {}) {
   const currentUrl = page.url();
 
-  // Already inside a project? Use it.
+  // Already inside a project or composer is visible? Use it.
   if (currentUrl.includes('/project/')) {
     logger.info('Already in a project — reusing', { url: currentUrl });
+    return { url: currentUrl, reused: true };
+  }
+  const composerReady = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
+  if (composerReady) {
+    logger.info('Prompt composer is directly visible on current page — reusing', { url: currentUrl });
     return { url: currentUrl, reused: true };
   }
 
