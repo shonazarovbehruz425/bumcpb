@@ -158,8 +158,12 @@ async function ensureBrowser() {
   if (ready && isBrowserConnected()) { try { getPage(); return; } catch { ready = false; } }
   if (ensuring) return ensuring; // prevent concurrent double-launch
   ensuring = (async () => {
-    console.log('[api] Launching persistent Chrome...');
-    const { page } = await launchChromeDirect({ headless: get('headless', false) });
+    console.log('[api] Launching persistent Chrome (Account Pool Active)...');
+    const profile2Exists = fs.existsSync('/home/beka/.config/google-chrome-acc2');
+    const { page } = await launchChromeDirect({
+      headless: get('headless', false),
+      profileSource: profile2Exists ? '/home/beka/.config/google-chrome-acc2' : undefined
+    });
     const nav = await navigateToFlow(page);
     attachResultListener(page);
     ready = true;
