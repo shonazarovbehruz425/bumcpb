@@ -4,21 +4,13 @@ import path from 'path';
 
 async function runTest() {
   console.log('--- LIVE DOM INSPECTOR START ---');
-  let browser;
-  try {
-    console.log('Connecting via CDP to port 9222...');
-    browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
-  } catch (e) {
-    console.log('CDP connection failed, launching Chrome with chrome-profile-kiara...');
-    const profileDir = path.resolve(process.cwd(), 'chrome-profile-kiara');
-    browser = await chromium.launchPersistentContext(profileDir, {
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-  }
-
-  const context = browser.contexts()[0] || (await browser.newContext());
-  const page = context.pages()[0] || (await context.newPage());
+  console.log('Launching Chrome directly with logged-in chrome-profile-kiara...');
+  const profileDir = path.resolve(process.cwd(), 'chrome-profile-kiara');
+  const browserContext = await chromium.launchPersistentContext(profileDir, {
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+  const page = browserContext.pages()[0] || (await browserContext.newPage());
 
   const targetUrl = 'https://labs.google/fx/ru/tools/flow/project/7401dff5-f325-4ec2-90e0-4639a6d7d5ff';
   console.log(`Navigating to ${targetUrl}...`);
