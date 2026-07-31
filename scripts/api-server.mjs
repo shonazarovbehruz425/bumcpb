@@ -152,19 +152,60 @@ function finalizeUploads(job) {
   })().catch(() => { fireWebhook(job); });
 }
 
+// ---------- Multi-Account Pool & Rotation ----------
+let activeAccountIndex = 0;
+function getAccountsList() {
+  const configured = get('accounts', []);
+  if (Array.isArray(configured) && configured.length > 0) return configured;
+  return [
+    {
+      account: get('expectedAccount', 'behruzyuldoshev691@gmail.com'),
+      chromeUserDataDir: get('chromeUserDataDir', '/home/beka/.config/google-chrome'),
+      chromeProfile: get('chromeProfile', 'Default'),
+      cdpPort: get('cdpPort', 9222)
+    },
+    {
+      account: 'behruzzz406@gmail.com',
+      chromeUserDataDir: '/home/beka/.config/google-chrome-acc2',
+      chromeProfile: 'Default',
+      cdpPort: 9223
+    }
+  ];
+}
+
+function getActiveAccount() {
+  const list = getAccountsList();
+  return list[activeAccountIndex % list.length];
+}
+
+function rotateAccount() {
+  const list = getAccountsList();
+  if (list.length <= 1) return false;
+  activeAccountIndex = (activeAccountIndex + 1) % list.length;
+  console.log(`[api] Rotated active account to #${activeAccountIndex + 1}: ${getActiveAccount().account}`);
+  return true;
+}
+
 // ---------- Browser lifecycle + maintenance ----------
 let ensuring = null;
 async function ensureBrowser() {
   if (ready && isBrowserConnected()) { try { getPage(); return; } catch { ready = false; } }
   if (ensuring) return ensuring; // prevent concurrent double-launch
   ensuring = (async () => {
-    console.log('[api] Launching persistent Chrome...');
-    const { page } = await launchChromeDirect({ headless: get('headless', false) });
+    const acc = getActiveAccount();
+    const port = acc.cdpPort || CDP_PORT;
+    console.log(`[api] Launching persistent Chrome for Account #${activeAccountIndex + 1} (${acc.account}, port ${port})...`);
+    const { page } = await launchChromeDirect({
+      headless: get('headless', false),
+      cdpPort: port,
+      profileName: acc.chromeProfile || 'Default',
+      profileSource: acc.chromeUserDataDir ? path.join(acc.chromeUserDataDir, acc.chromeProfile || 'Default') : undefined
+    });
     const nav = await navigateToFlow(page);
     attachResultListener(page);
     ready = true;
-    if (nav && nav.authenticated === false) alertAdmin('Google session logged out / verification required. Re-login via VNC.');
-    console.log('[api] Chrome ready and on Google Flow.');
+    if (nav && nav.authenticated === false) alertAdmin(`Google session for Account #${activeAccountIndex + 1} (${acc.account}) logged out / verification required.`);
+    console.log(`[api] Chrome ready on Google Flow for Account #${activeAccountIndex + 1} (${acc.account}).`);
   })().finally(() => { ensuring = null; });
   return ensuring;
 }
@@ -175,7 +216,11 @@ function cleanTempProfiles() {
     for (const n of fs.readdirSync(tmp)) { if (!n.startsWith('chrome-kiara-cdp-')) continue; const f = path.join(tmp, n); if (f === cur) continue; try { if (Date.now() - fs.statSync(f).mtimeMs > 5 * 60 * 1000) fs.rmSync(f, { recursive: true, force: true }); } catch {} }
   } catch {}
 }
-async function cdpHealthy() { try { const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`); return r.ok; } catch { return false; } }
+async function cdpHealthy() {
+  const acc = getActiveAccount();
+  const port = acc.cdpPort || CDP_PORT;
+  try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); return r.ok; } catch { return false; }
+}
 function shouldRecycleChrome() { if (!ready) return false; if (genCount - lastRecycleGen >= RECYCLE_EVERY) return true; if (availableMemMB() < MIN_AVAIL_MB) return true; return false; }
 function runRetention() {
   if (RETENTION_DAYS <= 0) return; const cutoff = Date.now() - RETENTION_DAYS * 86400000;
@@ -397,15 +442,40 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && urlPath === '/health') {
     const healthy = ready && await cdpHealthy();
+    const acc = getActiveAccount();
+    const accountsList = getAccountsList();
     return json(res, 200, {
       ok: true,
       serverIp,
       publicUrl,
       chromeReady: ready,
       cdpHealthy: healthy,
-      account: get('expectedAccount'),
+      account: acc.account,
+      activeAccountIndex: activeAccountIndex + 1,
+      totalAccounts: accountsList.length,
+      accounts: accountsList.map((a, idx) => ({ index: idx + 1, account: a.account, active: idx === (activeAccountIndex % accountsList.length) })),
       creditsRemaining: getCredits().remaining,
       queue: { pending: queue.length, inFlight: inFlight.size, concurrency: CONCURRENCY }
+    });
+  }
+
+  if (req.method === 'POST' && urlPath === '/admin/accounts/switch') {
+    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+    let body = {}; try { body = JSON.parse(await readBody(req) || '{}'); } catch {}
+    const list = getAccountsList();
+    if (body.index && parseInt(body.index, 10) > 0 && parseInt(body.index, 10) <= list.length) {
+      activeAccountIndex = parseInt(body.index, 10) - 1;
+    } else {
+      rotateAccount();
+    }
+    const currentAcc = getActiveAccount();
+    await resetBrowser();
+    await ensureBrowser();
+    return json(res, 200, {
+      ok: true,
+      activeAccountIndex: activeAccountIndex + 1,
+      account: currentAcc.account,
+      totalAccounts: list.length
     });
   }
   if (req.method === 'GET' && urlPath === '/ip') {
@@ -492,34 +562,6 @@ const server = http.createServer(async (req, res) => {
     saveDynamicKeys();
     audit({ action: 'revoke_api_key', key: keyInfo(req)?.name, ip, revokedKeyName: info.name });
     return json(res, 200, { key: targetKey, name: info.name, status: 'revoked' });
-  }
-
-  // ---------- Multi-Profile Management ----------
-  if (req.method === 'GET' && urlPath === '/admin/profiles') {
-    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
-    const conf = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    const defaultProfile = { profileName: conf.chromeProfile || 'Default', projectId: conf.projectId, email: conf.expectedAccount || 'main' };
-    const extraProfiles = conf.profiles || [];
-    return json(res, 200, { activeProfile: conf.chromeProfile || 'Default', profiles: [defaultProfile, ...extraProfiles] });
-  }
-
-  if (req.method === 'POST' && urlPath === '/admin/profiles') {
-    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
-    let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, 400, { error: 'invalid_json' }); }
-    const profileName = (body.profileName || body.profile || 'Profile 1').trim();
-    const projectId = (body.projectId || '').trim();
-    const email = (body.email || 'second_account@gmail.com').trim();
-    if (!projectId) return json(res, 400, { error: 'missing_projectId' });
-
-    const conf = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
-    conf.profiles = conf.profiles || [];
-    const idx = conf.profiles.findIndex(p => p.profileName === profileName);
-    const item = { profileName, projectId, email, addedAt: new Date().toISOString() };
-    if (idx >= 0) conf.profiles[idx] = item;
-    else conf.profiles.push(item);
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(conf, null, 2) + '\n');
-    audit({ action: 'add_profile', key: keyInfo(req)?.name, ip, profileName, projectId });
-    return json(res, 201, { ok: true, profile: item, totalProfiles: conf.profiles.length + 1 });
   }
 
   if (req.method === 'GET' && urlPath.startsWith('/outputs/')) return serveOutput(res, urlPath);
