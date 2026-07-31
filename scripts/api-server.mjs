@@ -467,8 +467,13 @@ const server = http.createServer(async (req, res) => {
     if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
     let body = {}; try { body = JSON.parse(await readBody(req) || '{}'); } catch {}
     const list = getAccountsList();
-    if (body.index && parseInt(body.index, 10) > 0 && parseInt(body.index, 10) <= list.length) {
+    if (body.accountIndex && parseInt(body.accountIndex, 10) > 0 && parseInt(body.accountIndex, 10) <= list.length) {
+      activeAccountIndex = parseInt(body.accountIndex, 10) - 1;
+    } else if (body.index && parseInt(body.index, 10) > 0 && parseInt(body.index, 10) <= list.length) {
       activeAccountIndex = parseInt(body.index, 10) - 1;
+    } else if (body.account) {
+      const idx = list.findIndex(a => a.account.toLowerCase() === body.account.toLowerCase());
+      if (idx !== -1) activeAccountIndex = idx; else rotateAccount();
     } else {
       rotateAccount();
     }
