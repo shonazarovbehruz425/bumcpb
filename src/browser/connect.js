@@ -48,7 +48,7 @@ export async function connectToBrowser(options = {}) {
 
 async function launchNewBrowser(cdpPort, options = {}) {
   const chromePath = resolveChromePath(options.chromePath || get('chromePath'));
-  const profileDir = options.profileDir || path.resolve(import.meta.dirname, '../../chrome-profile-kiara');
+  const profileDir = options.profileDir || path.resolve(process.cwd(), 'chrome-profile-kiara');
 
   if (!fs.existsSync(chromePath)) {
     throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, `Chrome not found at ${chromePath}`);

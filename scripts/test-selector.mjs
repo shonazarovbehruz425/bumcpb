@@ -9,8 +9,12 @@ async function runTest() {
     console.log('Connecting via CDP to port 9222...');
     browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
   } catch (e) {
-    console.log('CDP connection failed, launching fresh headless Chromium...');
-    browser = await chromium.launch({ headless: true });
+    console.log('CDP connection failed, launching Chrome with chrome-profile-kiara...');
+    const profileDir = path.resolve(process.cwd(), 'chrome-profile-kiara');
+    browser = await chromium.launchPersistentContext(profileDir, {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
   }
 
   const context = browser.contexts()[0] || (await browser.newContext());

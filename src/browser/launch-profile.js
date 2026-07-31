@@ -17,13 +17,9 @@ export async function launchKiaraProfile(headless = false) {
   }
 
   const chromePath = resolveChromePath(get('chromePath'));
-  const userDataDir = get('chromeUserDataDir');
-  const profileName = get('chromeProfile', 'Profile 3');
-  const profileSource = resolveProfileSource(userDataDir, profileName);
-
+  let profileSource = path.resolve(get('flowHome', '.'), 'chrome-profile-kiara');
   if (!fs.existsSync(profileSource)) {
-    throw new FlowError(ErrorCodes.INVALID_PARAMS,
-      `Chrome profile "${profileName}" not found at ${profileSource}. Make sure the profile exists and is configured with your Google account.`);
+    profileSource = path.resolve(process.cwd(), 'chrome-profile-kiara');
   }
 
   logger.info('Launching Chrome via direct+CDP method (anti-detection)', { profileSource });
