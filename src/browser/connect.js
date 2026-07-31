@@ -48,7 +48,7 @@ export async function connectToBrowser(options = {}) {
 
 async function launchNewBrowser(cdpPort, options = {}) {
   const chromePath = resolveChromePath(options.chromePath || get('chromePath'));
-  const profileDir = options.profileDir || path.resolve(process.cwd(), 'chrome-profile-kiara');
+  const profileDir = options.profileDir || path.resolve(import.meta.dirname, '../../chrome-profile-kiara');
 
   if (!fs.existsSync(chromePath)) {
     throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, `Chrome not found at ${chromePath}`);
@@ -131,11 +131,18 @@ export async function launchChromeDirect(options = {}) {
 
   logger.info('Temp profile created with cookies', { tempDir });
 
+  // FIRST: Try to connect to existing Chrome (e.g. opened manually via VNC)
   try {
-    const existing = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    await existing.close();
-    await new Promise(r => setTimeout(r, 1000));
-  } catch { }
+    logger.info('Attempting to connect to existing Chrome on CDP', { cdpPort });
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    context = browser.contexts()[0];
+    page = context.pages()[0] || await context.newPage();
+    isConnected = true;
+    logger.info('Connected to existing Chrome successfully', { pages: context.pages().length });
+    return { browser, context, page };
+  } catch (e) {
+    logger.info('No existing Chrome found, will launch new one', { error: e.message });
+  }
 
   const args = [
     `--remote-debugging-port=${cdpPort}`,
