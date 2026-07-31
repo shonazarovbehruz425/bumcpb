@@ -258,9 +258,18 @@ export async function ensureProjectInContext(page, context = {}) {
     const flowBase = get('flowUrl', 'https://labs.google/fx/fr/tools/flow');
     const projectUrl = `${flowBase}/project/${configProjectId}`;
     logger.info('Using projectId from config', { projectId: configProjectId, url: projectUrl });
-    await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    return { url: projectUrl, reused: true, id: configProjectId };
+    try {
+      await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+      const currentUrl = page.url();
+      const hasComposer = await page.evaluate(() => !!document.querySelector('[contenteditable="true"], textarea')).catch(() => false);
+      if (currentUrl.includes('/project/') && hasComposer) {
+        return { url: projectUrl, reused: true, id: configProjectId };
+      }
+      logger.warn('Config project ID not accessible on active account, falling back to account project', { url: currentUrl });
+    } catch (e) {
+      logger.warn('Failed to load config project ID, falling back', { error: e.message });
+    }
   }
 
   // If forceNew, skip matching
