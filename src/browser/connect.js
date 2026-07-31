@@ -129,6 +129,14 @@ export async function launchChromeDirect(options = {}) {
     logger.info('No existing Chrome found, will launch persistent profile directly', { error: e.message });
   }
 
+  // Auto-clean any stale Singleton locks to prevent "Failed to create ProcessSingleton" aborts
+  try {
+    for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+      const p = path.join(userDir, lock);
+      if (fs.existsSync(p) || fs.lstatSync(p).isSymbolicLink()) fs.rmSync(p, { force: true });
+    }
+  } catch {}
+
   const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${userDir}`,
