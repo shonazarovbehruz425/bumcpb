@@ -201,6 +201,16 @@ async function waitForComposer(page, ms = 30000) {
   while (Date.now() < end) {
     const ok = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
     if (ok) return true;
+    await page.keyboard.press('Escape').catch(() => {});
+    for (const text of ['No thanks', 'Got it', 'Accept', "J'accepte", 'OK', 'Dismiss', 'Close']) {
+      try {
+        const btn = page.locator(`button:has-text("${text}")`).first();
+        if (await btn.isVisible().catch(() => false)) {
+          await btn.click().catch(() => {});
+          await page.waitForTimeout(500);
+        }
+      } catch {}
+    }
     await page.waitForTimeout(1000);
   }
   return false;
