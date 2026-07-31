@@ -1,6 +1,6 @@
 {
   "flowHome": ".",
-  "flowUrl": "https://labs.google/fx/fr/tools/flow",
+  "flowUrl": "https://labs.google/fx/tools/flow",
   "expectedAccount": "your-email@gmail.com",
   "chromeProfile": "Default",
   "chromeUserDataDir": "",

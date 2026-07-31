@@ -90,8 +90,12 @@ export async function createNewProject(page, name, campaign) {
 
   logger.info('Creating new project...');
 
-  // Click "Nouveau projet"
+  // Click "Nouveau projet" / "Новый проект" / "New project"
   const newBtnSelectors = [
+    'button:has-text("Новый проект")',
+    'button:has-text("Создать проект")',
+    'a:has-text("Новый проект")',
+    '[aria-label*="Новый проект"]',
     'button:has-text("Nouveau projet")',
     'a:has-text("Nouveau projet")',
     '[aria-label*="Nouveau projet"]',
