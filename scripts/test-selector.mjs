@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { resolveChromePath } from '../src/utils/paths.js';
 
 async function runTest() {
   console.log('--- LIVE DOM INSPECTOR START ---');
@@ -9,7 +10,8 @@ async function runTest() {
   const profileDir = path.resolve(process.cwd(), 'chrome-profile-kiara');
   console.log('Using persistent user data dir:', profileDir);
 
-  const chromeBin = '/home/behruz/.cache/ms-playwright/chromium-1223/chrome-linux/chrome';
+  const chromeBin = resolveChromePath();
+  console.log('Resolved Chrome binary path:', chromeBin);
   const cdpPort = 9222;
 
   console.log('Launching Chrome directly via spawn with anti-detection flags...');
@@ -25,7 +27,7 @@ async function runTest() {
   ], { detached: true, stdio: 'ignore' });
   child.unref();
 
-  await new Promise(r => setTimeout(r, 3000));
+  await new Promise(r => setTimeout(r, 4000));
 
   console.log('Connecting via CDP...');
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
