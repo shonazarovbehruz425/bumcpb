@@ -258,9 +258,16 @@ export async function ensureProjectInContext(page, context = {}) {
     const flowBase = get('flowUrl', 'https://labs.google/fx/fr/tools/flow');
     const projectUrl = `${flowBase}/project/${configProjectId}`;
     logger.info('Using projectId from config', { projectId: configProjectId, url: projectUrl });
-    await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForTimeout(3000);
-    return { url: projectUrl, reused: true, id: configProjectId };
+    try {
+      await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+      const isOk = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
+      if (isOk || page.url().includes('/project/')) {
+        return { url: page.url(), reused: true, id: configProjectId };
+      }
+    } catch (e) {
+      logger.warn('Navigating to config project failed', { error: e.message });
+    }
   }
 
   // If forceNew, skip matching
