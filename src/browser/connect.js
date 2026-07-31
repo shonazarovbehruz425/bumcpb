@@ -104,10 +104,9 @@ export async function launchChromeDirect(options = {}) {
   const chromePath = resolveChromePath(options.chromePath || get('chromePath'));
   const cdpPort = options.cdpPort || get('cdpPort', 9222);
   const headless = options.headless ?? get('headless', false);
-  const profileName = options.profileName || get('chromeProfile', 'Profile 3');
-  const profileSource = options.profileSource || resolveProfileSource(get('chromeUserDataDir'), profileName);
+  const userDir = options.profileSource || get('chromeUserDataDir') || '/home/beka/.config/google-chrome';
 
-  if (isConnected && page) {
+  if (isConnected && page && !page.isClosed()) {
     logger.info('Already connected, reusing browser');
     return { browser, context, page };
   }
@@ -116,38 +115,23 @@ export async function launchChromeDirect(options = {}) {
     throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, `Chrome not found at ${chromePath}`);
   }
 
-  const tempDir = makeTempProfileDir();
-  fs.mkdirSync(tempDir, { recursive: true });
-
-  const localStateSrc = path.join(path.dirname(profileSource), 'Local State');
-  if (fs.existsSync(profileSource)) {
-    fs.cpSync(profileSource, path.join(tempDir, profileName), { recursive: true });
-  }
-  if (fs.existsSync(localStateSrc)) {
-    fs.cpSync(localStateSrc, path.join(tempDir, 'Local State'));
-  } else {
-    fs.writeFileSync(path.join(tempDir, 'Local State'), JSON.stringify({ profile: { info_cache: {} } }));
-  }
-
-  logger.info('Temp profile created with cookies', { tempDir });
-
-  // FIRST: Try to connect to existing Chrome (e.g. opened manually via VNC)
+  // FIRST: Try to connect to existing Chrome running on CDP
   try {
     logger.info('Attempting to connect to existing Chrome on CDP', { cdpPort });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
     context = browser.contexts()[0];
-    page = context.pages()[0] || await context.newPage();
+    const pages = context.pages();
+    page = pages.find(p => p.url().includes('labs.google')) || pages[0] || await context.newPage();
     isConnected = true;
-    logger.info('Connected to existing Chrome successfully', { pages: context.pages().length });
+    logger.info('Connected to existing Chrome successfully', { url: page.url() });
     return { browser, context, page };
   } catch (e) {
-    logger.info('No existing Chrome found, will launch new one', { error: e.message });
+    logger.info('No existing Chrome found, will launch persistent profile directly', { error: e.message });
   }
 
   const args = [
     `--remote-debugging-port=${cdpPort}`,
-    `--user-data-dir=${tempDir}`,
-    `--profile-directory=${profileName}`,
+    `--user-data-dir=${userDir}`,
     '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
@@ -158,7 +142,7 @@ export async function launchChromeDirect(options = {}) {
     args.push('--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu');
   }
 
-  logger.info('Launching Chrome directly', { chromePath, cdpPort, headless });
+  logger.info('Launching Chrome directly with user profile', { chromePath, userDir, cdpPort, headless });
 
   const chromeProcess = spawn(chromePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
