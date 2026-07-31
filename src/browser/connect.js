@@ -119,7 +119,7 @@ export async function launchChromeDirect(options = {}) {
       const r = await fetch(`http://127.0.0.1:${cdpPort}/json/version`);
       if (r.ok) { const d = await r.json(); if (d.webSocketDebuggerUrl) wsUrl = d.webSocketDebuggerUrl; }
     } catch {}
-    browser = await chromium.connectOverCDP(wsUrl);
+    browser = await chromium.connectOverCDP(wsUrl, { acceptDownloads: false });
     context = browser.contexts()[0];
     const pages = context.pages();
     page = pages.find(p => p.url().includes('labs.google')) || pages[0] || await context.newPage();
@@ -176,7 +176,7 @@ export async function launchChromeDirect(options = {}) {
     if (r.ok) { const d = await r.json(); if (d.webSocketDebuggerUrl) wsUrl = d.webSocketDebuggerUrl; }
   } catch {}
 
-  browser = await chromium.connectOverCDP(wsUrl);
+  browser = await chromium.connectOverCDP(wsUrl, { acceptDownloads: false });
   context = browser.contexts()[0];
   page = context.pages()[0] || await context.newPage();
   isConnected = true;

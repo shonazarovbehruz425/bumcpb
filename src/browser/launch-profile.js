@@ -31,7 +31,7 @@ export async function launchKiaraProfile(headless = false) {
       const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
       if (r.ok) { const d = await r.json(); if (d.webSocketDebuggerUrl) wsUrl = d.webSocketDebuggerUrl; }
     } catch {}
-    const existing = await chromium.connectOverCDP(wsUrl);
+    const existing = await chromium.connectOverCDP(wsUrl, { acceptDownloads: false });
     logger.info('Found existing Chrome instance, reusing');
     const ctx = existing.contexts()[0];
     const pg = ctx?.pages()[0];
