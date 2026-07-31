@@ -494,6 +494,34 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { key: targetKey, name: info.name, status: 'revoked' });
   }
 
+  // ---------- Multi-Profile Management ----------
+  if (req.method === 'GET' && urlPath === '/admin/profiles') {
+    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+    const conf = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const defaultProfile = { profileName: conf.chromeProfile || 'Default', projectId: conf.projectId, email: conf.expectedAccount || 'main' };
+    const extraProfiles = conf.profiles || [];
+    return json(res, 200, { activeProfile: conf.chromeProfile || 'Default', profiles: [defaultProfile, ...extraProfiles] });
+  }
+
+  if (req.method === 'POST' && urlPath === '/admin/profiles') {
+    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+    let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, 400, { error: 'invalid_json' }); }
+    const profileName = (body.profileName || body.profile || 'Profile 1').trim();
+    const projectId = (body.projectId || '').trim();
+    const email = (body.email || 'second_account@gmail.com').trim();
+    if (!projectId) return json(res, 400, { error: 'missing_projectId' });
+
+    const conf = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    conf.profiles = conf.profiles || [];
+    const idx = conf.profiles.findIndex(p => p.profileName === profileName);
+    const item = { profileName, projectId, email, addedAt: new Date().toISOString() };
+    if (idx >= 0) conf.profiles[idx] = item;
+    else conf.profiles.push(item);
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(conf, null, 2) + '\n');
+    audit({ action: 'add_profile', key: keyInfo(req)?.name, ip, profileName, projectId });
+    return json(res, 201, { ok: true, profile: item, totalProfiles: conf.profiles.length + 1 });
+  }
+
   if (req.method === 'GET' && urlPath.startsWith('/outputs/')) return serveOutput(res, urlPath);
   if (req.method === 'GET' && urlPath.startsWith('/batch/')) { const bid = urlPath.slice('/batch/'.length); const list = [...jobs.values()].filter((j) => j.batchId === bid); if (!list.length) return json(res, 404, { error: 'not_found' }); const by = (s) => list.filter((j) => j.status === s).length; return json(res, 200, { batchId: bid, total: list.length, done: by('done'), failed: by('failed'), processing: by('processing'), queued: by('queued'), cancelled: by('cancelled'), jobs: list.map((j) => publicJob(j, host)) }); }
   if (req.method === 'GET' && urlPath.startsWith('/jobs/')) { const job = jobs.get(urlPath.slice('/jobs/'.length)); if (!job) return json(res, 404, { error: 'not_found' }); return json(res, 200, publicJob(job, host)); }
