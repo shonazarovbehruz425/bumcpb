@@ -29,11 +29,7 @@ export async function connectToBrowser(options = {}) {
     logger.info('Connected via CDP');
 
     const contexts = browser.contexts();
-    if (contexts.length > 0) {
-      context = contexts[0];
-    } else {
-      context = await browser.newContext();
-    }
+    context = contexts[0] || null;
 
     const pages = context.pages();
     page = pages.length > 0 ? pages[0] : await context.newPage();
