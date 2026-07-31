@@ -1,21 +1,41 @@
 import { chromium } from 'playwright';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 async function runTest() {
   console.log('--- LIVE DOM INSPECTOR START ---');
-  console.log('Launching Chrome directly with logged-in chrome-profile-kiara...');
+
   const profileDir = path.resolve(process.cwd(), 'chrome-profile-kiara');
-  const browserContext = await chromium.launchPersistentContext(profileDir, {
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  });
-  const page = browserContext.pages()[0] || (await browserContext.newPage());
+  console.log('Using persistent user data dir:', profileDir);
+
+  const chromeBin = '/home/behruz/.cache/ms-playwright/chromium-1223/chrome-linux/chrome';
+  const cdpPort = 9222;
+
+  console.log('Launching Chrome directly via spawn with anti-detection flags...');
+  const child = spawn(chromeBin, [
+    `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${profileDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-blink-features=AutomationControlled',
+    '--headless=new',
+    '--no-sandbox',
+    '--disable-setuid-sandbox'
+  ], { detached: true, stdio: 'ignore' });
+  child.unref();
+
+  await new Promise(r => setTimeout(r, 3000));
+
+  console.log('Connecting via CDP...');
+  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+  const context = browser.contexts()[0] || (await browser.newContext());
+  const page = context.pages()[0] || (await context.newPage());
 
   const targetUrl = 'https://labs.google/fx/ru/tools/flow/project/7401dff5-f325-4ec2-90e0-4639a6d7d5ff';
   console.log(`Navigating to ${targetUrl}...`);
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(5000);
+  await page.waitForTimeout(6000);
 
   console.log('Current Page URL:', page.url());
   console.log('Current Page Title:', await page.title());
