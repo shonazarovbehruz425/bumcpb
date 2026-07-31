@@ -152,7 +152,8 @@ export async function launchChromeDirect(options = {}) {
 
   logger.info('Launching Chrome directly with user profile', { chromePath, userDir, cdpPort, headless });
 
-  const chromeProcess = spawn(chromePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const env = { ...process.env, DISPLAY: process.env.DISPLAY || ':1' };
+  const chromeProcess = spawn(chromePath, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
 
   const cdpUrl = `http://127.0.0.1:${cdpPort}`;
   let attempts = 0;
