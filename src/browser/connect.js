@@ -173,7 +173,6 @@ export async function launchChromeDirect(options = {}) {
   context = browser.contexts()[0];
   page = context.pages()[0] || await context.newPage();
   isConnected = true;
-  global.__chromeTempDir = tempDir;
 
   logger.info('Chrome direct + CDP connected', { webdriver: await page.evaluate(() => navigator.webdriver) });
   return { browser, context, page };
