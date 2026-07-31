@@ -562,9 +562,9 @@ const server = http.createServer(async (req, res) => {
       enqueue(job);
       audit({ action: 'generate_sync', key: keyInfo(req)?.name, ip, jobId: job.id, prompt: job.prompt });
 
-      // Synchronously poll job completion up to 60 seconds
+      // Synchronously poll job completion up to 90 seconds
       const startTime = Date.now();
-      while (Date.now() - startTime < 60000) {
+      while (Date.now() - startTime < 90000) {
         const current = jobs.get(job.id);
         if (current && (current.status === 'done' || current.status === 'failed' || current.status === 'cancelled')) {
           if (current.status === 'done') {
