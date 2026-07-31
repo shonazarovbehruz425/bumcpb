@@ -117,7 +117,13 @@ function postJson(url, body) {
   if (WEBHOOK_SECRET) headers['X-Signature'] = 'sha256=' + crypto.createHmac('sha256', WEBHOOK_SECRET).update(payload).digest('hex');
   fetch(url, { method: 'POST', headers, body: payload }).catch(() => {});
 }
-function fireWebhook(job) { const url = job.callbackUrl || DEFAULT_WEBHOOK; if (url) postJson(url, publicJob(job, job.host)); }
+function fireWebhook(job) {
+  const url = job.callbackUrl || DEFAULT_WEBHOOK;
+  if (!url) return;
+  const pj = publicJob(job, job.host);
+  const firstImg = pj.images && pj.images[0] ? (pj.images[0].s3Url || pj.images[0].url) : null;
+  postJson(url, { ok: job.status === 'done', jobId: job.id, status: job.status, imageUrl: firstImg, images: pj.images, error: job.error, ...pj });
+}
 let lastAlertAt = 0;
 function alertAdmin(text) { const now = Date.now(); if (now - lastAlertAt < 60000) return; lastAlertAt = now; console.error('[api] ALERT:', text); if (ALERT_WEBHOOK) postJson(ALERT_WEBHOOK, { text: `[flow-api] ${text}` }); }
 
@@ -226,7 +232,7 @@ function makeJob(body, host) {
     requestedSeed: (body.seed !== undefined && body.seed !== null && body.seed !== '') ? parseInt(body.seed, 10) : null,
     count: Math.min(Math.max(parseInt(body.count || 1, 10), 1), 4),
     priority: parseInt(body.priority || 0, 10) || 0,
-    callbackUrl: body.webhook || body.callbackUrl || null,
+    callbackUrl: body.webhookUrl || body.webhook || body.callbackUrl || null,
     host, status: 'queued', stage: 'queued', images: [], seed: null, error: null, code: null,
     createdAt: Date.now(), startedAt: null, submittedAt: null, finishedAt: null,
   };
@@ -526,10 +532,64 @@ const server = http.createServer(async (req, res) => {
     audit({ action: 'retry', key: keyInfo(req)?.name, ip, jobId: id }); return json(res, 202, { id, status: 'queued' });
   }
 
-  if (req.method === 'POST' && (urlPath === '/generate' || urlPath === '/batch')) {
+  if (req.method === 'POST' && (urlPath === '/generate' || urlPath === '/generate-sync' || urlPath === '/batch')) {
     if (!checkQuota(req)) return json(res, 429, { error: 'quota_exceeded' }, { 'Retry-After': '3600' });
     if (queue.length >= MAX_QUEUE) return json(res, 429, { error: 'busy', message: 'Queue full' }, { 'Retry-After': '30' });
     let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, 400, { error: 'invalid_json' }); }
+
+    if (urlPath === '/generate-sync') {
+      if (!body.prompt || !body.prompt.trim()) return json(res, 400, { error: 'missing_prompt' });
+      const job = makeJob(body, host);
+      const skipCache = body.skipCache === true || body.skipCache === 'true';
+
+      if (!skipCache) {
+        const cacheHit = findSmartCache(job);
+        if (cacheHit) {
+          job.status = 'done'; job.stage = 'done'; job.images = JSON.parse(JSON.stringify(cacheHit.images));
+          job.seed = cacheHit.seed; job.finishedAt = Date.now();
+          jobs.set(job.id, job); if (job.idempotencyKey) idemMap.set(job.idempotencyKey, job.id);
+          saveJobs(); audit({ action: 'generate_sync_cache_hit', key: keyInfo(req)?.name, ip, jobId: job.id, prompt: job.prompt });
+          const pj = publicJob(job, host);
+          const firstImg = pj.images && pj.images[0] ? (pj.images[0].s3Url || pj.images[0].url) : null;
+          return json(res, 200, { ok: true, cached: true, jobId: job.id, imageUrl: firstImg, images: pj.images, reproduction: job.reproduction });
+        }
+      }
+
+      enqueue(job);
+      audit({ action: 'generate_sync', key: keyInfo(req)?.name, ip, jobId: job.id, prompt: job.prompt });
+
+      // Synchronously poll job completion up to 60 seconds
+      const startTime = Date.now();
+      while (Date.now() - startTime < 60000) {
+        const current = jobs.get(job.id);
+        if (current && (current.status === 'done' || current.status === 'failed' || current.status === 'cancelled')) {
+          if (current.status === 'done') {
+            const pj = publicJob(current, host);
+            const firstImg = pj.images && pj.images[0] ? (pj.images[0].s3Url || pj.images[0].url) : null;
+            return json(res, 200, {
+              ok: true,
+              cached: false,
+              jobId: current.id,
+              imageUrl: firstImg,
+              images: pj.images,
+              seed: current.seed,
+              reproduction: current.reproduction
+            });
+          } else {
+            return json(res, 500, {
+              ok: false,
+              jobId: current.id,
+              status: current.status,
+              error: current.error || 'generation_failed'
+            });
+          }
+        }
+        await sleep(800);
+      }
+
+      // Timeout after 60s
+      return json(res, 500, { ok: false, jobId: job.id, error: 'timeout_exceeded_60s' });
+    }
 
     if (urlPath === '/generate') {
       if (!body.prompt || !body.prompt.trim()) return json(res, 400, { error: 'missing_prompt' });
