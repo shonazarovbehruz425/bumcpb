@@ -90,12 +90,8 @@ export async function createNewProject(page, name, campaign) {
 
   logger.info('Creating new project...');
 
-  // Click "Nouveau projet" / "Новый проект" / "New project"
+  // Click "Nouveau projet"
   const newBtnSelectors = [
-    'button:has-text("Новый проект")',
-    'button:has-text("Создать проект")',
-    'a:has-text("Новый проект")',
-    '[aria-label*="Новый проект"]',
     'button:has-text("Nouveau projet")',
     'a:has-text("Nouveau projet")',
     '[aria-label*="Nouveau projet"]',
@@ -209,8 +205,10 @@ export async function createNewProject(page, name, campaign) {
         finalUrl = page.url();
         logger.info('Navigated into project via click', { url: finalUrl });
       } else {
-        logger.info('Proceeding with current page context');
-        finalUrl = page.url();
+        await takeScreenshot(page, 'no-project-links');
+        throw new FlowError(ErrorCodes.UNKNOWN_UI_CHANGE,
+          'Could not find project card to navigate into. ' +
+          'The project was created but no card link was found.');
       }
     }
   }
@@ -248,15 +246,21 @@ export async function createNewProject(page, name, campaign) {
 export async function ensureProjectInContext(page, context = {}) {
   const currentUrl = page.url();
 
-  // Already inside a project or composer is visible? Use it.
+  // Already inside a project? Use it.
   if (currentUrl.includes('/project/')) {
     logger.info('Already in a project — reusing', { url: currentUrl });
     return { url: currentUrl, reused: true };
   }
-  const composerReady = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
-  if (composerReady) {
-    logger.info('Prompt composer is directly visible on current page — reusing', { url: currentUrl });
-    return { url: currentUrl, reused: true };
+
+  // If projectId is set in config, navigate directly to that project
+  const configProjectId = get('projectId');
+  if (configProjectId && !context.forceNew) {
+    const flowBase = get('flowUrl', 'https://labs.google/fx/fr/tools/flow');
+    const projectUrl = `${flowBase}/project/${configProjectId}`;
+    logger.info('Using projectId from config', { projectId: configProjectId, url: projectUrl });
+    await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    return { url: projectUrl, reused: true, id: configProjectId };
   }
 
   // If forceNew, skip matching
