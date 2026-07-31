@@ -196,7 +196,7 @@ async function ensureBrowser() {
     const port = acc.cdpPort || CDP_PORT;
     console.log(`[api] Launching persistent Chrome for Account #${activeAccountIndex + 1} (${acc.account}, port ${port})...`);
     const { page } = await launchChromeDirect({
-      headless: get('headless', false),
+      headless: true,
       cdpPort: port,
       profileName: acc.chromeProfile || 'Default',
       profileSource: acc.chromeUserDataDir ? path.join(acc.chromeUserDataDir, acc.chromeProfile || 'Default') : undefined
