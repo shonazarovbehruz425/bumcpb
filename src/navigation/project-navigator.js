@@ -258,30 +258,9 @@ export async function ensureProjectInContext(page, context = {}) {
     const flowBase = get('flowUrl', 'https://labs.google/fx/fr/tools/flow');
     const projectUrl = `${flowBase}/project/${configProjectId}`;
     logger.info('Using projectId from config', { projectId: configProjectId, url: projectUrl });
-    try {
-      await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(3000);
-
-      // Auto-dismiss modal dialogs / popups if present
-      await page.evaluate(() => {
-        const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
-        for (const b of btns) {
-          const txt = (b.textContent || '').trim().toLowerCase();
-          if (['ok', 'restore', 'got it', 'no thanks', 'accept', 'd\'accord'].includes(txt)) {
-            try { b.click(); } catch {}
-          }
-        }
-      }).catch(() => {});
-      await page.waitForTimeout(1000);
-
-      const currentUrl = page.url();
-      if (currentUrl.includes('/project/')) {
-        return { url: projectUrl, reused: true, id: configProjectId };
-      }
-      logger.warn('Config project ID not accessible on active account, falling back to account project', { url: currentUrl });
-    } catch (e) {
-      logger.warn('Failed to load config project ID, falling back', { error: e.message });
-    }
+    await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForTimeout(3000);
+    return { url: projectUrl, reused: true, id: configProjectId };
   }
 
   // If forceNew, skip matching

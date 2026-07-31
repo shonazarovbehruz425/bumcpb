@@ -155,19 +155,11 @@ function finalizeUploads(job) {
 // ---------- Browser lifecycle + maintenance ----------
 let ensuring = null;
 async function ensureBrowser() {
-  if (ready && isBrowserConnected()) {
-    try {
-      const p = getPage();
-      if (p && !p.isClosed()) return;
-    } catch { ready = false; }
-  }
+  if (ready && isBrowserConnected()) { try { getPage(); return; } catch { ready = false; } }
   if (ensuring) return ensuring; // prevent concurrent double-launch
   ensuring = (async () => {
-    console.log('[api] Launching/Connecting persistent Chrome...');
-    try { await closeBrowser().catch(() => {}); } catch {}
-    const { page } = await launchChromeDirect({
-      headless: get('headless', false)
-    });
+    console.log('[api] Launching persistent Chrome...');
+    const { page } = await launchChromeDirect({ headless: get('headless', false) });
     const nav = await navigateToFlow(page);
     attachResultListener(page);
     ready = true;
@@ -566,9 +558,9 @@ const server = http.createServer(async (req, res) => {
       enqueue(job);
       audit({ action: 'generate_sync', key: keyInfo(req)?.name, ip, jobId: job.id, prompt: job.prompt });
 
-      // Synchronously poll job completion up to 90 seconds
+      // Synchronously poll job completion up to 60 seconds
       const startTime = Date.now();
-      while (Date.now() - startTime < 90000) {
+      while (Date.now() - startTime < 60000) {
         const current = jobs.get(job.id);
         if (current && (current.status === 'done' || current.status === 'failed' || current.status === 'cancelled')) {
           if (current.status === 'done') {

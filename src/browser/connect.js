@@ -29,7 +29,11 @@ export async function connectToBrowser(options = {}) {
     logger.info('Connected via CDP');
 
     const contexts = browser.contexts();
-    context = contexts[0] || null;
+    if (contexts.length > 0) {
+      context = contexts[0];
+    } else {
+      context = await browser.newContext();
+    }
 
     const pages = context.pages();
     page = pages.length > 0 ? pages[0] : await context.newPage();
@@ -98,10 +102,12 @@ async function launchNewBrowser(cdpPort, options = {}) {
  */
 export async function launchChromeDirect(options = {}) {
   const chromePath = resolveChromePath(options.chromePath || get('chromePath'));
+  const cdpPort = options.cdpPort || get('cdpPort', 9222);
   const headless = options.headless ?? get('headless', false);
-  const userDir = options.profileSource || get('chromeUserDataDir') || '/home/beka/.config/google-chrome';
+  const profileName = options.profileName || get('chromeProfile', 'Profile 3');
+  const profileSource = options.profileSource || resolveProfileSource(get('chromeUserDataDir'), profileName);
 
-  if (isConnected && page && !page.isClosed()) {
+  if (isConnected && page) {
     logger.info('Already connected, reusing browser');
     return { browser, context, page };
   }
@@ -110,40 +116,73 @@ export async function launchChromeDirect(options = {}) {
     throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, `Chrome not found at ${chromePath}`);
   }
 
-  // Auto-clean any stale Singleton locks to prevent "Failed to create ProcessSingleton" aborts
+  const tempDir = makeTempProfileDir();
+  fs.mkdirSync(tempDir, { recursive: true });
+
+  const localStateSrc = path.join(path.dirname(profileSource), 'Local State');
+  if (fs.existsSync(profileSource)) {
+    fs.cpSync(profileSource, path.join(tempDir, profileName), { recursive: true });
+  }
+  if (fs.existsSync(localStateSrc)) {
+    fs.cpSync(localStateSrc, path.join(tempDir, 'Local State'));
+  } else {
+    fs.writeFileSync(path.join(tempDir, 'Local State'), JSON.stringify({ profile: { info_cache: {} } }));
+  }
+
+  logger.info('Temp profile created with cookies', { tempDir });
+
+  // FIRST: Try to connect to existing Chrome (e.g. opened manually via VNC)
   try {
-    for (const lock of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
-      const p = path.join(userDir, lock);
-      if (fs.existsSync(p) || fs.lstatSync(p).isSymbolicLink()) fs.rmSync(p, { force: true });
-    }
-  } catch {}
+    logger.info('Attempting to connect to existing Chrome on CDP', { cdpPort });
+    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    context = browser.contexts()[0];
+    page = context.pages()[0] || await context.newPage();
+    isConnected = true;
+    logger.info('Connected to existing Chrome successfully', { pages: context.pages().length });
+    return { browser, context, page };
+  } catch (e) {
+    logger.info('No existing Chrome found, will launch new one', { error: e.message });
+  }
 
   const args = [
+    `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${tempDir}`,
+    `--profile-directory=${profileName}`,
     '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
     '--window-size=1920,1080',
   ];
+  if (headless) args.push('--headless=new');
   if (process.platform === 'linux') {
     args.push('--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu');
   }
 
-  logger.info('Launching Chrome persistent context directly', { chromePath, userDir, headless });
+  logger.info('Launching Chrome directly', { chromePath, cdpPort, headless });
 
-  context = await chromium.launchPersistentContext(userDir, {
-    executablePath: chromePath,
-    headless,
-    args,
-    viewport: { width: 1920, height: 1080 },
-    env: { ...process.env, DISPLAY: process.env.DISPLAY || ':1' }
-  });
+  const chromeProcess = spawn(chromePath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  browser = context.browser() || null;
-  const pages = context.pages();
-  page = pages.find(p => p.url().includes('labs.google')) || pages[0] || await context.newPage();
+  const cdpUrl = `http://127.0.0.1:${cdpPort}`;
+  let attempts = 0;
+  while (attempts < 20) {
+    try {
+      const resp = await fetch(`${cdpUrl}/json/version`);
+      if (resp.ok) break;
+    } catch { }
+    await new Promise(r => setTimeout(r, 1000));
+    attempts++;
+  }
+  if (attempts >= 20) {
+    throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, 'Chrome CDP failed to start in time');
+  }
+
+  browser = await chromium.connectOverCDP(cdpUrl);
+  context = browser.contexts()[0];
+  page = context.pages()[0] || await context.newPage();
   isConnected = true;
+  global.__chromeTempDir = tempDir;
 
-  logger.info('Chrome persistent context launched successfully', { url: page.url() });
+  logger.info('Chrome direct + CDP connected', { webdriver: await page.evaluate(() => navigator.webdriver) });
   return { browser, context, page };
 }
 
@@ -168,15 +207,6 @@ export async function closeBrowser() {
 }
 
 export function getPage() {
-  if (context) {
-    try {
-      const pages = context.pages();
-      for (const p of pages) {
-        if (p.url().includes('labs.google')) return p;
-      }
-      if (pages.length > 0) return pages[pages.length - 1];
-    } catch {}
-  }
   if (!page) {
     throw new FlowError(ErrorCodes.BROWSER_NOT_CONNECTED, 'Browser not connected. Call connectToBrowser() first.');
   }
