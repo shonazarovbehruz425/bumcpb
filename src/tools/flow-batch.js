@@ -198,21 +198,9 @@ async function currentSettings(page) {
 // Wait until the generation composer (prompt input) is actually present.
 async function waitForComposer(page, ms = 30000) {
   const end = Date.now() + ms;
-  const selectors = [
-    '[contenteditable="true"]',
-    'textarea',
-    '[role="textbox"]',
-    '[placeholder*="Describe"]',
-    '[placeholder*="Опишите"]',
-    '[placeholder*="Saisissez"]',
-    'div[class*="composer"]',
-    'div[class*="prompt"]',
-  ];
   while (Date.now() < end) {
-    for (const sel of selectors) {
-      const ok = await page.locator(sel).first().isVisible().catch(() => false);
-      if (ok) return true;
-    }
+    const ok = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
+    if (ok) return true;
     await page.waitForTimeout(1000);
   }
   return false;
