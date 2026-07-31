@@ -49,9 +49,23 @@ if (!SINGLE_KEY) {
   console.log(`[api] Generated API key: ${SINGLE_KEY}`);
 }
 const KEY_LIST = (get('apiKeys', []) || []).map((k) => (typeof k === 'string' ? { key: k, name: 'client' } : k));
-const KEY_INFO = new Map([[SINGLE_KEY, { name: 'default', dailyLimit: 0 }], ...KEY_LIST.map((k) => [k.key, { name: k.name || 'client', dailyLimit: k.dailyLimit || 0 }])]);
+const KEY_INFO = new Map([[SINGLE_KEY, { name: 'default', dailyLimit: 0 }], ...KEY_LIST.map((k) => [k.key, { name: k.name || 'client', dailyLimit: k.dailyLimit || 0, createdAt: k.createdAt || null }])]);
 function keyInfo(req) { return KEY_INFO.get(req.headers['x-api-key']); }
 function authorized(req) { return KEY_INFO.has(req.headers['x-api-key']); }
+
+function saveDynamicKeys() {
+  try {
+    const c = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+    const list = [];
+    for (const [k, info] of KEY_INFO.entries()) {
+      if (k !== SINGLE_KEY) list.push({ key: k, name: info.name, dailyLimit: info.dailyLimit || 0, createdAt: info.createdAt || Date.now() });
+    }
+    c.apiKeys = list;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(c, null, 2) + '\n');
+  } catch (e) {
+    console.error('[api] failed to save dynamic keys:', e.message);
+  }
+}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -425,6 +439,55 @@ const server = http.createServer(async (req, res) => {
       totalCost: +(totalImages * COST_PER_IMAGE).toFixed(4),
     });
   }
+
+  // ---------- Admin Dynamic API Keys Management ----------
+  if (req.method === 'GET' && urlPath === '/admin/keys') {
+    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+    const today = new Date().toISOString().slice(0, 10);
+    const list = [];
+    for (const [k, info] of KEY_INFO.entries()) {
+      const u = keyUsage.get(k) || { day: today, count: 0 };
+      const todayUsed = u.day === today ? u.count : 0;
+      let totalImages = 0;
+      for (const j of jobs.values()) if (j.status === 'done' && j.apiKey === k) totalImages += (j.images || []).length;
+      list.push({
+        key: k,
+        name: info.name || 'client',
+        dailyLimit: info.dailyLimit || 0,
+        todayUsed,
+        totalImages,
+        isMaster: k === SINGLE_KEY,
+        createdAt: info.createdAt || null
+      });
+    }
+    return json(res, 200, { keys: list, total: list.length });
+  }
+
+  if (req.method === 'POST' && urlPath === '/admin/keys') {
+    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+    let body; try { body = JSON.parse(await readBody(req) || '{}'); } catch { return json(res, 400, { error: 'invalid_json' }); }
+    const name = (body.name || 'client').trim();
+    const dailyLimit = parseInt(body.dailyLimit || 0, 10) || 0;
+    const newKey = (body.key || crypto.randomBytes(16).toString('hex')).trim();
+    const info = { name, dailyLimit, createdAt: Date.now() };
+    KEY_INFO.set(newKey, info);
+    saveDynamicKeys();
+    audit({ action: 'create_api_key', key: keyInfo(req)?.name, ip, newKeyName: name, newKey: newKey.slice(0, 8) + '...' });
+    return json(res, 201, { key: newKey, name, dailyLimit, createdAt: info.createdAt });
+  }
+
+  if (req.method === 'DELETE' && urlPath.startsWith('/admin/keys/')) {
+    if (!authorized(req)) return json(res, 401, { error: 'unauthorized' });
+    const targetKey = decodeURIComponent(urlPath.slice('/admin/keys/'.length)).trim();
+    if (!KEY_INFO.has(targetKey)) return json(res, 404, { error: 'key_not_found' });
+    if (targetKey === SINGLE_KEY) return json(res, 403, { error: 'cannot_delete_master_key' });
+    const info = KEY_INFO.get(targetKey);
+    KEY_INFO.delete(targetKey);
+    saveDynamicKeys();
+    audit({ action: 'revoke_api_key', key: keyInfo(req)?.name, ip, revokedKeyName: info.name });
+    return json(res, 200, { key: targetKey, name: info.name, status: 'revoked' });
+  }
+
   if (req.method === 'GET' && urlPath.startsWith('/outputs/')) return serveOutput(res, urlPath);
   if (req.method === 'GET' && urlPath.startsWith('/batch/')) { const bid = urlPath.slice('/batch/'.length); const list = [...jobs.values()].filter((j) => j.batchId === bid); if (!list.length) return json(res, 404, { error: 'not_found' }); const by = (s) => list.filter((j) => j.status === s).length; return json(res, 200, { batchId: bid, total: list.length, done: by('done'), failed: by('failed'), processing: by('processing'), queued: by('queued'), cancelled: by('cancelled'), jobs: list.map((j) => publicJob(j, host)) }); }
   if (req.method === 'GET' && urlPath.startsWith('/jobs/')) { const job = jobs.get(urlPath.slice('/jobs/'.length)); if (!job) return json(res, 404, { error: 'not_found' }); return json(res, 200, publicJob(job, host)); }
