@@ -164,17 +164,10 @@ export async function launchChromeDirect(options = {}) {
     }
   }
 
-  const realUserDataDir = profileSource ? path.dirname(profileSource) : tempDir;
-  try {
-    const lockPath = path.join(realUserDataDir, 'SingletonLock');
-    if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-  } catch {}
-
-  logger.info('Launching persistent Chrome via Playwright', { chromePath, cdpPort, headless, realUserDataDir, profileName });
+  logger.info('Launching persistent Chrome via Playwright', { chromePath, cdpPort, headless, tempDir, profileName });
 
   const launchArgs = [
     `--remote-debugging-port=${cdpPort}`,
-    `--user-data-dir=${realUserDataDir}`,
     `--profile-directory=${profileName}`,
     '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
@@ -183,7 +176,7 @@ export async function launchChromeDirect(options = {}) {
     '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'
   ];
 
-  context = await chromium.launchPersistentContext(realUserDataDir, {
+  context = await chromium.launchPersistentContext(tempDir, {
     executablePath: chromePath,
     headless: headless,
     args: launchArgs,
