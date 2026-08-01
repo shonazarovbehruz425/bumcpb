@@ -12,20 +12,22 @@ try {
       account: 'behruzyuldoshev691@gmail.com',
       chromeUserDataDir: '/home/beka/.config/google-chrome',
       chromeProfile: 'Default',
-      cdpPort: 9222
+      cdpPort: 9222,
+      projectId: '7401dff5-f325-4ec2-90e0-4639a6d7d5ff'
     },
     {
       account: 'behruzzz406@gmail.com',
-      chromeUserDataDir: '/home/beka/.config/google-chrome-acc2',
-      chromeProfile: 'Default',
-      cdpPort: 9223
+      chromeUserDataDir: '/home/beka/.config/google-chrome',
+      chromeProfile: 'Profile 1',
+      cdpPort: 9223,
+      projectId: '7f3bc736-6c4e-4573-a207-6bb887a95317'
     }
   ];
   c.expectedAccount = 'behruzyuldoshev691@gmail.com';
-  c.projectId = '';
+  c.projectId = '7401dff5-f325-4ec2-90e0-4639a6d7d5ff';
   c.headless = true;
   fs.writeFileSync(configPath, JSON.stringify(c, null, 2) + '\n');
-  console.log('[setup-accounts] Successfully configured 2 accounts in flow.config.json.');
+  console.log('[setup-accounts] Successfully updated 2 accounts matching start-chrome.sh.');
 } catch (e) {
   console.error('[setup-accounts] Error:', e.message);
 }

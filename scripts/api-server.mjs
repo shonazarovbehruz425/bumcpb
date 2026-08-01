@@ -195,14 +195,15 @@ async function ensureBrowser() {
     const acc = getActiveAccount();
     const port = acc.cdpPort || CDP_PORT;
     const headlessMode = get('headless', false);
-    console.log(`[api] Launching persistent Chrome for Account #${activeAccountIndex + 1} (${acc.account}, port ${port}, headless ${headlessMode})...`);
+    const targetUrl = acc.projectId ? `https://labs.google/fx/tools/flow/project/${acc.projectId}` : 'https://labs.google/fx/fr/tools/flow';
+    console.log(`[api] Connecting Chrome for Account #${activeAccountIndex + 1} (${acc.account}, port ${port}, project ${acc.projectId || 'none'})...`);
     const { page } = await launchChromeDirect({
       headless: headlessMode,
       cdpPort: port,
       profileName: acc.chromeProfile || 'Default',
       profileSource: acc.chromeUserDataDir ? path.join(acc.chromeUserDataDir, acc.chromeProfile || 'Default') : undefined
     });
-    const nav = await navigateToFlow(page);
+    const nav = await navigateToFlow(page, targetUrl);
     attachResultListener(page);
     ready = true;
     if (nav && nav.authenticated === false) alertAdmin(`Google session for Account #${activeAccountIndex + 1} (${acc.account}) logged out / verification required.`);
