@@ -174,6 +174,7 @@ export async function launchChromeDirect(options = {}) {
 
   const launchArgs = [
     `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${realUserDataDir}`,
     `--profile-directory=${profileName}`,
     '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
