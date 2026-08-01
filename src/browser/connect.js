@@ -164,9 +164,10 @@ export async function launchChromeDirect(options = {}) {
     }
   }
 
+  const realUserDataDir = profileSource ? path.dirname(profileSource) : tempDir;
   const args = [
     `--remote-debugging-port=${cdpPort}`,
-    `--user-data-dir=${tempDir}`,
+    `--user-data-dir=${realUserDataDir}`,
     `--profile-directory=${profileName}`,
     '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
