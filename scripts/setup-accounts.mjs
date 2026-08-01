@@ -13,18 +13,18 @@ try {
       chromeUserDataDir: '/home/beka/.config/google-chrome',
       chromeProfile: 'Default',
       cdpPort: 9222,
-      projectId: '7401dff5-f325-4ec2-90e0-4639a6d7d5ff'
+      projectId: ''
     },
     {
       account: 'behruzzz406@gmail.com',
       chromeUserDataDir: '/home/beka/.config/google-chrome',
       chromeProfile: 'Profile 1',
       cdpPort: 9223,
-      projectId: '7f3bc736-6c4e-4573-a207-6bb887a95317'
+      projectId: ''
     }
   ];
   c.expectedAccount = 'behruzyuldoshev691@gmail.com';
-  c.projectId = '7401dff5-f325-4ec2-90e0-4639a6d7d5ff';
+  c.projectId = '';
   c.chromePath = '';
   c.headless = true;
   fs.writeFileSync(configPath, JSON.stringify(c, null, 2) + '\n');
