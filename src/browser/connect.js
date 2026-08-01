@@ -179,6 +179,14 @@ export async function launchChromeDirect(options = {}) {
     args.push('--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu');
   }
 
+  if (process.platform === 'linux') {
+    try { execSync('pkill -9 -f chrome || true'); } catch {}
+    try {
+      const lockPath = path.join(realUserDataDir, 'SingletonLock');
+      if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+    } catch {}
+  }
+
   logger.info('Launching Chrome directly', { chromePath, cdpPort, headless });
 
   const chromeProcess = spawn(chromePath, args, { 
