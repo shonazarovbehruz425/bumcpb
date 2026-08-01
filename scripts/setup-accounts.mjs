@@ -25,6 +25,7 @@ try {
   ];
   c.expectedAccount = 'behruzyuldoshev691@gmail.com';
   c.projectId = '7401dff5-f325-4ec2-90e0-4639a6d7d5ff';
+  c.chromePath = '';
   c.headless = true;
   fs.writeFileSync(configPath, JSON.stringify(c, null, 2) + '\n');
   console.log('[setup-accounts] Successfully updated 2 accounts matching start-chrome.sh.');
