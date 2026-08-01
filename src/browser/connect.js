@@ -165,57 +165,35 @@ export async function launchChromeDirect(options = {}) {
   }
 
   const realUserDataDir = profileSource ? path.dirname(profileSource) : tempDir;
-  const args = [
+  try {
+    const lockPath = path.join(realUserDataDir, 'SingletonLock');
+    if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+  } catch {}
+
+  logger.info('Launching persistent Chrome via Playwright', { chromePath, cdpPort, headless, realUserDataDir, profileName });
+
+  const launchArgs = [
     `--remote-debugging-port=${cdpPort}`,
-    `--user-data-dir=${realUserDataDir}`,
     `--profile-directory=${profileName}`,
     '--password-store=basic',
     '--no-first-run', '--no-default-browser-check',
     '--disable-blink-features=AutomationControlled',
     '--window-size=1920,1080',
+    '--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'
   ];
-  if (headless) args.push('--headless=new');
-  if (process.platform === 'linux') {
-    args.push('--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu');
-  }
 
-  if (process.platform === 'linux') {
-    try { execSync('pkill -9 -f chrome || true'); } catch {}
-    try {
-      const lockPath = path.join(realUserDataDir, 'SingletonLock');
-      if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-    } catch {}
-  }
-
-  logger.info('Launching Chrome directly', { chromePath, cdpPort, headless });
-
-  const chromeProcess = spawn(chromePath, args, { 
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, DISPLAY: process.env.DISPLAY || ':1' }
+  context = await chromium.launchPersistentContext(realUserDataDir, {
+    executablePath: chromePath,
+    headless: headless,
+    args: launchArgs,
+    viewport: { width: 1920, height: 1080 }
   });
-
-  const cdpUrl = `http://127.0.0.1:${cdpPort}`;
-  let attempts = 0;
-  while (attempts < 20) {
-    try {
-      const resp = await fetch(`${cdpUrl}/json/version`);
-      if (resp.ok) break;
-    } catch { }
-    await new Promise(r => setTimeout(r, 1000));
-    attempts++;
-  }
-  if (attempts >= 20) {
-    throw new FlowError(ErrorCodes.PLAYWRIGHT_ERROR, 'Chrome CDP failed to start in time');
-  }
-
-  browser = await chromium.connectOverCDP(cdpUrl);
-  context = browser.contexts()[0];
-  page = context.pages()[0] || await context.newPage();
+  page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
   isConnected = true;
   global.__chromeTempDir = tempDir;
 
-  logger.info('Chrome direct + CDP connected', { webdriver: await page.evaluate(() => navigator.webdriver) });
-  return { browser, context, page };
+  logger.info('Chrome persistent context launched successfully');
+  return { browser: context, context, page };
 }
 
 export async function closeBrowser() {
