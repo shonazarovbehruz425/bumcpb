@@ -122,7 +122,10 @@ export async function createNewProject(page, name, campaign) {
     }
   }
 
-  await page.waitForTimeout(4000);
+  try {
+    await page.waitForURL(url => url.href.includes('/project/'), { timeout: 10000 });
+  } catch {}
+  await page.waitForTimeout(2000);
 
   const projectUrl = page.url();
   logger.info('New project created', { url: projectUrl });
