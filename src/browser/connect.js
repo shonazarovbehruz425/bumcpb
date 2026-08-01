@@ -135,10 +135,21 @@ export async function launchChromeDirect(options = {}) {
   try {
     logger.info('Attempting to connect to existing Chrome on CDP', { cdpPort });
     browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    context = browser.contexts()[0];
-    page = context.pages()[0] || await context.newPage();
+    const contexts = browser.contexts();
+    if (contexts.length > 0) {
+      context = contexts[0];
+      const pages = context.pages();
+      page = pages.length > 0 ? pages[0] : await context.newPage();
+    } else {
+      context = await browser.newContext();
+      page = await context.newPage();
+    }
     isConnected = true;
-    logger.info('Connected to existing Chrome successfully', { pages: context.pages().length });
+    logger.info('✅ Connected to existing Chrome successfully', { 
+      contexts: browser.contexts().length,
+      pages: context.pages().length,
+      currentUrl: await page.url().catch(() => 'unknown')
+    });
     return { browser, context, page };
   } catch (e) {
     logger.info('No existing Chrome found, will launch new one', { error: e.message });
