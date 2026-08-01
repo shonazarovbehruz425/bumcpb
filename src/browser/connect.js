@@ -132,27 +132,36 @@ export async function launchChromeDirect(options = {}) {
   logger.info('Temp profile created with cookies', { tempDir });
 
   // FIRST: Try to connect to existing Chrome (e.g. opened manually via VNC)
-  try {
-    logger.info('Attempting to connect to existing Chrome on CDP', { cdpPort });
-    browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-    const contexts = browser.contexts();
-    if (contexts.length > 0) {
-      context = contexts[0];
-      const pages = context.pages();
-      page = pages.length > 0 ? pages[0] : await context.newPage();
-    } else {
-      context = await browser.newContext();
-      page = await context.newPage();
+  // Retry up to 3 times with delays in case Chrome CDP server is still initializing
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      logger.info(`Attempting to connect to existing Chrome on CDP (attempt ${attempt}/3)`, { cdpPort });
+      browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 5000 });
+      const contexts = browser.contexts();
+      if (contexts.length > 0) {
+        context = contexts[0];
+        const pages = context.pages();
+        page = pages.length > 0 ? pages[0] : await context.newPage();
+      } else {
+        context = await browser.newContext();
+        page = await context.newPage();
+      }
+      isConnected = true;
+      logger.info('✅ Connected to existing Chrome successfully', { 
+        attempt,
+        contexts: browser.contexts().length,
+        pages: context.pages().length,
+        currentUrl: await page.url().catch(() => 'unknown')
+      });
+      return { browser, context, page };
+    } catch (e) {
+      logger.warn(`Connection attempt ${attempt}/3 failed`, { error: e.message });
+      if (attempt < 3) {
+        await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry
+      } else {
+        logger.info('All connection attempts failed, will launch new Chrome', { error: e.message });
+      }
     }
-    isConnected = true;
-    logger.info('✅ Connected to existing Chrome successfully', { 
-      contexts: browser.contexts().length,
-      pages: context.pages().length,
-      currentUrl: await page.url().catch(() => 'unknown')
-    });
-    return { browser, context, page };
-  } catch (e) {
-    logger.info('No existing Chrome found, will launch new one', { error: e.message });
   }
 
   const args = [
