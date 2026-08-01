@@ -173,8 +173,9 @@ export async function createNewProject(page, name, campaign) {
 
   let finalUrl = page.url();
 
-  // If we're not inside a project (no /project/ in URL), click the project card
-  if (!finalUrl.includes('/project/')) {
+  // If we're not inside a project and composer is not visible yet, try to click a project card
+  const composerPresent = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
+  if (!finalUrl.includes('/project/') && !composerPresent) {
     logger.info('Not inside project page, clicking project card to enter...');
     await page.waitForTimeout(2000);
 
@@ -204,11 +205,6 @@ export async function createNewProject(page, name, campaign) {
         await page.waitForTimeout(3000);
         finalUrl = page.url();
         logger.info('Navigated into project via click', { url: finalUrl });
-      } else {
-        await takeScreenshot(page, 'no-project-links');
-        throw new FlowError(ErrorCodes.UNKNOWN_UI_CHANGE,
-          'Could not find project card to navigate into. ' +
-          'The project was created but no card link was found.');
       }
     }
   }
