@@ -276,7 +276,7 @@ export async function ensureProjectInContext(page, context = {}) {
     const store = loadProjects();
     if (context.campaign) {
       const match = store.projects.find(p =>
-        p.campaign && p.campaign.toLowerCase() === context.campaign.toLowerCase()
+        p.campaign && p.campaign.toLowerCase() === context.campaign.toLowerCase() && (p.url || '').includes('/project/')
       );
       if (match) {
         logger.info('Found matching project from history', {
