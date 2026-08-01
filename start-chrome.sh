@@ -1,5 +1,5 @@
 #!/bin/bash
-export DISPLAY=:0
+export DISPLAY=:1
 
 # 1-profil (Default)
 google-chrome --profile-directory="Default" --no-sandbox > /dev/null 2>&1 &
