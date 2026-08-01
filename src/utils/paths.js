@@ -30,29 +30,31 @@ export function windowsChromeCandidates() {
  */
 export function linuxChromeCandidates() {
   const home = getHomeDir();
-  const candidates = [
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable',
-    '/opt/google/chrome/chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    '/snap/bin/chromium',
-  ];
-  try {
-    const pwPath = chromium.executablePath();
-    if (pwPath) candidates.unshift(pwPath);
-  } catch {}
+  const candidates = [];
   try {
     const pwCache = path.join(home, '.cache', 'ms-playwright');
     if (fs.existsSync(pwCache)) {
       for (const item of fs.readdirSync(pwCache)) {
         if (item.startsWith('chromium')) {
           const bin = path.join(pwCache, item, 'chrome-linux', 'chrome');
-          if (fs.existsSync(bin)) candidates.unshift(bin);
+          if (fs.existsSync(bin)) candidates.push(bin);
         }
       }
     }
   } catch {}
+  try {
+    const pwPath = chromium.executablePath();
+    if (pwPath && fs.existsSync(pwPath)) candidates.push(pwPath);
+  } catch {}
+
+  candidates.push(
+    '/usr/bin/google-chrome',
+    '/usr/bin/google-chrome-stable',
+    '/opt/google/chrome/chrome',
+    '/usr/bin/chromium-browser',
+    '/usr/bin/chromium',
+    '/snap/bin/chromium'
+  );
   return candidates;
 }
 
