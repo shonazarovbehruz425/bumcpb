@@ -194,9 +194,10 @@ async function ensureBrowser() {
   ensuring = (async () => {
     const acc = getActiveAccount();
     const port = acc.cdpPort || CDP_PORT;
-    console.log(`[api] Launching persistent Chrome for Account #${activeAccountIndex + 1} (${acc.account}, port ${port})...`);
+    const headlessMode = get('headless', false);
+    console.log(`[api] Launching persistent Chrome for Account #${activeAccountIndex + 1} (${acc.account}, port ${port}, headless ${headlessMode})...`);
     const { page } = await launchChromeDirect({
-      headless: true,
+      headless: headlessMode,
       cdpPort: port,
       profileName: acc.chromeProfile || 'Default',
       profileSource: acc.chromeUserDataDir ? path.join(acc.chromeUserDataDir, acc.chromeProfile || 'Default') : undefined
