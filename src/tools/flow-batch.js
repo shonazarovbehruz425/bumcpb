@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js';
 import { ensureProjectInContext } from '../navigation/project-navigator.js';
 import { configureGeneration, inferRatioFromPrompt } from './generate-image.js';
 import { FlowError, ErrorCodes } from '../utils/errors.js';
+import { takeScreenshot } from '../utils/screenshots.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
@@ -198,9 +199,33 @@ async function currentSettings(page) {
 // Wait until the generation composer (prompt input) is actually present.
 async function waitForComposer(page, ms = 30000) {
   const end = Date.now() + ms;
+  let lastCheckTime = 0;
   while (Date.now() < end) {
     const ok = await page.locator('[contenteditable="true"], textarea').first().isVisible().catch(() => false);
     if (ok) return true;
+    
+    // Log available inputs every 10 seconds for debugging
+    if (Date.now() - lastCheckTime > 10000) {
+      const inputs = await page.evaluate(() => {
+        const all = [];
+        document.querySelectorAll('input, textarea, [contenteditable]').forEach(el => {
+          if (el.offsetParent !== null) { // visible elements only
+            all.push({
+              tag: el.tagName,
+              type: el.type || '',
+              contenteditable: el.getAttribute('contenteditable'),
+              placeholder: el.placeholder || '',
+              id: el.id || '',
+              className: el.className || ''
+            });
+          }
+        });
+        return all;
+      }).catch(() => []);
+      logger.info('Composer not found yet, visible inputs:', { count: inputs.length, inputs: inputs.slice(0, 5) });
+      lastCheckTime = Date.now();
+    }
+    
     await page.waitForTimeout(1000);
   }
   return false;
@@ -217,11 +242,30 @@ export async function submitPrompt({ prompt, ratio, model, reference, count, see
   let composerReady = await waitForComposer(page, 30000);
   if (!composerReady) {
     logger.warn('Composer not ready — reloading project once');
+    await takeScreenshot(page, 'composer-not-found-before-reload');
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
     await page.waitForTimeout(3000);
     composerReady = await waitForComposer(page, 30000);
   }
   if (!composerReady) {
+    // Take screenshot and dump DOM before throwing error
+    await takeScreenshot(page, 'composer-not-found-final');
+    const domInfo = await page.evaluate(() => {
+      return {
+        url: window.location.href,
+        title: document.title,
+        bodyText: document.body.innerText.substring(0, 500),
+        allInputs: Array.from(document.querySelectorAll('input, textarea, [contenteditable]')).map(el => ({
+          tag: el.tagName,
+          type: el.type || '',
+          contenteditable: el.getAttribute('contenteditable'),
+          visible: el.offsetParent !== null,
+          placeholder: el.placeholder || '',
+          className: el.className.substring(0, 50)
+        }))
+      };
+    }).catch(() => ({ error: 'Could not evaluate DOM' }));
+    logger.error('Composer not found - DOM state:', domInfo);
     throw new FlowError(ErrorCodes.UNKNOWN_UI_CHANGE, 'Generation composer (prompt input) not available');
   }
 
